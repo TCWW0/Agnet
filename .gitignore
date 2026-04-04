@@ -1,0 +1,13 @@
+.venv
+
+.env
+
+__pycache__
+
+skills/
+tool-output/
+memory/
+logs/
+
+# 忽略实际的TODO数据文件，但保留目录结构
+bin/todo/*.json
