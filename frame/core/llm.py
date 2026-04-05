@@ -5,7 +5,7 @@ import logging
 
 
 class LLMClient:
-    def __init__(self, config: LLMConfig,):
+    def __init__(self, config: LLMConfig):
         self.config = config
         self.client = OpenAI(
             api_key=self.config.api_key_,
