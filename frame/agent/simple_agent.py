@@ -18,7 +18,7 @@ class SimpleAgent(BaseAgent):
         sys_msg = Message(role="system", action="init", content=SYSTEM_PROMPT)
         self.sys_prompt_ = SYSTEM_PROMPT
         self.history.append(sys_msg)
-        self.logger.info(sys_msg.to_log())
+        #self.logger.info(sys_msg.to_log())
 
     def once_think(self, input: str) -> str:
         user_msg = Message(role="user", action="input", content=input)
@@ -49,7 +49,7 @@ class SimpleAgent(BaseAgent):
             response = self.inner_think(input)
             if response.action == "final":
                 # 仅记录最终内容，避免重复或暴露内部元信息
-                self.logger.info("当前轮次%d,Agent最终回答：%s", round+1, response.content)
+                #self.logger.info("当前轮次%d,Agent最终回答：%s", round+1, response.content)
                 return response.content
         self.logger.info("达到最大轮次，Agent最终回答：%s", response.content)
         return response.content
@@ -72,7 +72,29 @@ if __name__ == "__main__":
     llm_client = LLMClient(llm_config)
     agent_config = AgentConfig.from_env()
     simple_agent = SimpleAgent("SimpleAgent", agent_config, llm_client)
-    user_input = "请介绍一下你自己。"
-    response = simple_agent.think(user_input)
-    #logging.getLogger(f"agent.{simple_agent.name_}").info(response)
-    print("Agent回答：", response)
+    try:
+        # ensure agent is built (SimpleAgent already sets sys prompt in __init__ but build is safe)
+        simple_agent.build()
+    except Exception:
+        pass
+
+    print("SimpleAgent ready. 输入 'exit' 或 'quit' 退出。")
+    try:
+        while True:
+            try:
+                user = input("输入问题> ").strip()
+            except EOFError:
+                break
+            if not user:
+                continue
+            if user.lower() in ("exit", "quit"):
+                break
+            # single-pass think for this input
+            try:
+                resp = simple_agent.think(user)
+            except Exception:
+                simple_agent.logger.exception("SimpleAgent 调用失败")
+                resp = "[agent error]"
+            print("Agent回答：", resp)
+    except KeyboardInterrupt:
+        print("\n退出")

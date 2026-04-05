@@ -7,15 +7,23 @@ from frame.core.message import Message
 from frame.tool import ToolRegistry
 from frame.tool.todo import TODOTool
 from frame.core.prompts import TOOL_SYSTEM_PROMPT
+from frame.core.logging_config import setup_logging
+from typing import Optional, List
 import json
 import re
 import logging
-from frame.core.logging_config import setup_logging
 
 class TODOAgent(BaseAgent):
-    def __init__(self, name: str, config: AgentConfig, llm: LLMClient):
-        self.tool_registry = ToolRegistry()
-        self.tool_registry.register(TODOTool())
+    def __init__(self, name: str, config: AgentConfig, llm: LLMClient, tool_registry: Optional[ToolRegistry] = None):
+        # allow injecting a shared ToolRegistry so multiple agents can share the same TODO tool
+        if tool_registry is None:
+            self.tool_registry = ToolRegistry()
+            self.tool_registry.register(TODOTool())
+        else:
+            self.tool_registry = tool_registry
+            # ensure a TODO tool is registered
+            if "TODO" not in self.tool_registry.list_tools():
+                self.tool_registry.register(TODOTool())
         super().__init__(name, config, llm)
 
     def init_sys_prompt(self) -> str:
@@ -148,6 +156,105 @@ class TODOAgent(BaseAgent):
         # 支持常见中英文分隔符，包括中文顿号、全角逗号等
         parts = [p.strip() for p in re.split(r"[\n。；、，;,.]+", text) if p.strip()]
         return [{"content": p} for p in parts]
+
+    def split_and_save(self, text: str, workflow_id: Optional[str] = None) -> List[int]:
+        """Split the input text into tasks, attach workflow_id metadata, and save to the shared TODOTool.
+
+        Returns list of created item ids (ints)."""
+        # Build similar prompt as in _think_impl
+        prompt = self.init_sys_prompt() + "\n\n"
+        for m in self.history:
+            try:
+                prompt += m.to_prompt() + "\n"
+            except Exception:
+                prompt += str(m) + "\n"
+
+        prompt += (
+            "请把上面的用户输入拆分为若干个不相互依赖的子任务。\n"
+            "严格只输出一个 JSON 数组，数组中每个元素为对象，字段至少包含:\n"
+            "  - \"content\": 子任务描述（字符串）\n"
+            "可选字段:\n"
+            "  - \"metadata\": 对象，用于携带额外信息\n"
+            "示例输出（仅示例）：\n"
+            "  [{\"content\":\"撰写报告\"},{\"content\":\"制作 PPT\"}]\n"
+        )
+
+        try:
+            response = self.llm_.invoke(prompt)
+        except Exception:
+            logging.getLogger("agent.todo").exception("LLM 调用失败")
+            tasks = self._simple_split(text)
+            response = json.dumps(tasks, ensure_ascii=False)
+
+        # parse response
+        tasks = []
+        try:
+            tasks = json.loads(response)
+            if isinstance(tasks, dict) and "tasks" in tasks:
+                tasks = tasks["tasks"]
+            if not isinstance(tasks, list):
+                raise ValueError("not a list")
+        except Exception:
+            start = response.find("[")
+            end = response.rfind("]")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    tasks = json.loads(response[start:end+1])
+                except Exception:
+                    tasks = []
+
+        if not tasks:
+            tasks = self._simple_split(text)
+
+        todo_tool = self.tool_registry.get("TODO")
+        if not todo_tool:
+            return []
+
+        created_ids: List[int] = []
+        index = 1
+        for t in tasks:
+            if isinstance(t, str):
+                content = t
+                metadata = {}
+            elif isinstance(t, dict):
+                content = t.get("content") or t.get("task") or str(t)
+                metadata = t.get("metadata") or {}
+                if not isinstance(metadata, dict):
+                    metadata = {}
+            else:
+                content = str(t)
+                metadata = {}
+
+            if workflow_id:
+                metadata["workflow_id"] = workflow_id
+            metadata.setdefault("index", index)
+            metadata.setdefault("type", "task")
+
+            cmd = json.dumps({"op": "add", "content": content, "metadata": metadata}, ensure_ascii=False)
+            try:
+                rstr = todo_tool.run(cmd)
+                robj = json.loads(rstr)
+            except Exception:
+                robj = {"ok": False}
+            if isinstance(robj, dict) and robj.get("ok"):
+                id_val = robj.get("id")
+                # 如果没有直接的 id 字段，尝试从 item 中获取
+                if id_val is None:
+                    item = robj.get("item") if isinstance(robj, dict) else None
+                    if isinstance(item, dict):
+                        id_val = item.get("id")
+                try:
+                    if id_val is not None:
+                        created_ids.append(int(id_val))
+                except (ValueError, TypeError):
+                    try:
+                        created_ids.append(int(str(id_val)))
+                    except Exception:
+                        pass
+
+            index += 1
+
+        return created_ids
 
 
 if __name__ == "__main__":
