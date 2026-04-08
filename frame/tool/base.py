@@ -17,12 +17,12 @@ class Tool(ABC):
         self.description_ = description
 
     @abstractmethod
-    def run(self, input:str) -> str:
-        """执行工具的核心方法，接受一个字符串输入，返回一个字符串输出"""
+    def run(self, input:str) -> Any:
+        """执行工具的核心方法，接受一个字符串输入，返回任意类型的输出（可为字符串或结构化数据）。"""
         raise NotImplementedError("子类必须实现 run 方法")
     
     @abstractmethod
-    def parse_input(self, input:str):
+    def parse_input(self, input:str) -> Any:
         """解析输入字符串为所需要的参数"""
         raise NotImplementedError("子类必须实现 parse_input 方法")
 
