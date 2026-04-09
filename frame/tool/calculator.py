@@ -11,10 +11,10 @@
 from typing import Any, Dict
 import time
 
-from .base import Tool, ToolParameter
-from ..core.tool_protocol import ToolResult
+from .base import Tool, ToolParameter, InputParser, validate_tool_message
+from frame.core.message import ToolMessage, ToolResult
 
-class Calculator(Tool):
+class Calculator(Tool, InputParser):
     def __init__(self):
         super().__init__("Calculator", "一个简单的计算器工具，支持 add/sub/mul/div 三个参数：operation operand1 operand2")
         self.parameters = [
@@ -23,7 +23,7 @@ class Calculator(Tool):
             ToolParameter(name="operand2", type="float", description="第二个数字", required=True),
         ]
 
-    def parse_input(self, input: str) -> Dict[str, Any]:
+    def parse_input(self, input: str) -> ToolMessage:
         parts = input.strip().split()
         if len(parts) != 3:
             raise ValueError("输入格式应为：operation operand1 operand2，例如：add 3 5")
@@ -33,12 +33,31 @@ class Calculator(Tool):
             b = float(parts[2])
         except ValueError:
             raise ValueError("operand 必须是数字")
-        return {"operation": op, "operand1": a, "operand2": b}
+        return ToolMessage(
+            tool_name=self.name_,
+            tool_input={"operation": op, "operand1": a, "operand2": b},
+            phase="call",
+        )
 
-    def run(self, input: str) -> Dict[str, Any]:
+    def run(self, tool_message: ToolMessage) -> ToolResult:
         start = time.time()
         try:
-            params = self.parse_input(input)
+            # 严格要求 ToolMessage dict
+            tm = validate_tool_message(tool_message)
+        except Exception as e:
+            tr = ToolResult(tool_name=self.name_, status="error", error_message=str(e), original_input=tool_message)
+            tr.duration_ms = int((time.time() - start) * 1000)
+            return tr
+
+        tool_input = tm.tool_input
+        # tool_input 必须为 dict（不接受字符串或 None）
+        if not isinstance(tool_input, dict):
+            tr = ToolResult(tool_name=self.name_, status="error", error_message="tool_input must be a dict; string inputs are not accepted", original_input=tm.tool_input)
+            tr.duration_ms = int((time.time() - start) * 1000)
+            return tr
+
+        try:
+            params = tool_input
             op = params["operation"]
             a = params["operand1"]
             b = params["operand2"]
@@ -50,23 +69,23 @@ class Calculator(Tool):
                 res = a * b
             elif op in ("div", "/", "divide"):
                 if b == 0:
-                    tr = ToolResult(tool_name=self.name_, status="error", error_message="division by zero", original_input=input)
+                    tr = ToolResult(tool_name=self.name_, status="error", error_message="division by zero", original_input=tm.tool_input)
                     tr.duration_ms = int((time.time() - start) * 1000)
-                    return tr.to_dict()
+                    return tr
                 res = a / b
             else:
-                tr = ToolResult(tool_name=self.name_, status="error", error_message=f"Unknown operation: {op}", original_input=input)
+                tr = ToolResult(tool_name=self.name_, status="error", error_message=f"Unknown operation: {op}", original_input=tm.tool_input)
                 tr.duration_ms = int((time.time() - start) * 1000)
-                return tr.to_dict()
+                return tr
             # 优雅展示整数值
             output = int(res) if isinstance(res, float) and res.is_integer() else res
-            tr = ToolResult(tool_name=self.name_, status="ok", output=output, original_input=input, nl=f"计算结果是 {output}")
+            tr = ToolResult(tool_name=self.name_, status="ok", output=output, original_input=tm.tool_input, nl=f"计算结果是 {output}")
             tr.duration_ms = int((time.time() - start) * 1000)
-            return tr.to_dict()
+            return tr
         except Exception as e:
-            tr = ToolResult(tool_name=self.name_, status="error", error_message=str(e), original_input=input, nl=f"工具执行失败：{str(e)}")
+            tr = ToolResult(tool_name=self.name_, status="error", error_message=str(e), original_input=tool_message, nl=f"工具执行失败：{str(e)}")
             tr.duration_ms = int((time.time() - start) * 1000)
-            return tr.to_dict()
+            return tr
 
     @classmethod
     def description(cls) -> str:

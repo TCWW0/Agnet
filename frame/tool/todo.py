@@ -6,14 +6,15 @@
 或命令式文本：
   add 买菜
   update 3 status=COMPLETED
-返回值为 JSON 字符串，便于 Agent 解析。
+返回值为 `ToolResult` 对象，便于边界层序列化。
 """
-from .base import Tool, ToolParameter
+from .base import Tool, ToolParameter, validate_tool_message
+from frame.core.message import ToolMessage, ToolResult
 from .persistence import PersistenceBackend, JsonFileBackend
 import threading
 import os
 from enum import Enum
-from typing import List, Optional, Dict, Any, Tuple, Union
+from typing import List, Optional, Dict, Any, Union
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -30,8 +31,8 @@ class TODOItem:
     id: int
     content: str
     status: Status = Status.PENDING
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
     metadata: Dict[str, Any] = field(default_factory=dict)
     # 历史回答记录，每条为 {"by": str, "at": iso, "content": str, "metadata": {...}}
     responses: List[Dict[str, Any]] = field(default_factory=list)
@@ -162,7 +163,7 @@ class TODOTool(Tool):
                 it.metadata.update(metadata)
                 changed = True
             if changed:
-                it.updated_at = datetime.utcnow().isoformat()
+                it.updated_at = datetime.now().isoformat()
                 it.version += 1
                 res = {"ok": True, "item": self._to_dict(it)}
                 self._persist()
@@ -189,9 +190,9 @@ class TODOTool(Tool):
             if it.claimed_by and it.claimed_by != by:
                 return {"ok": False, "error": f"already claimed by {it.claimed_by}"}
             it.claimed_by = by
-            it.claimed_at = datetime.utcnow().isoformat()
+            it.claimed_at = datetime.now().isoformat()
             it.status = Status.IN_PROGRESS
-            it.updated_at = datetime.utcnow().isoformat()
+            it.updated_at = datetime.now().isoformat()
             it.version += 1
             res = {"ok": True, "item": self._to_dict(it)}
             self._persist()
@@ -208,7 +209,7 @@ class TODOTool(Tool):
                 return {"ok": False, "error": f"cannot release: claimed by {it.claimed_by}"}
             it.claimed_by = None
             it.claimed_at = None
-            it.updated_at = datetime.utcnow().isoformat()
+            it.updated_at = datetime.now().isoformat()
             it.version += 1
             res = {"ok": True, "item": self._to_dict(it)}
             self._persist()
@@ -220,9 +221,9 @@ class TODOTool(Tool):
             if idx is None:
                 return {"ok": False, "error": f"item {item_id} not found"}
             it = self._items[idx]
-            resp = {"by": by, "at": datetime.utcnow().isoformat(), "content": response, "metadata": metadata or {}}
+            resp = {"by": by, "at": datetime.now().isoformat(), "content": response, "metadata": metadata or {}}
             it.responses.append(resp)
-            it.updated_at = datetime.utcnow().isoformat()
+            it.updated_at = datetime.now().isoformat()
             it.version += 1
             res = {"ok": True, "item": self._to_dict(it)}
             self._persist()
@@ -271,8 +272,8 @@ class TODOTool(Tool):
                     id=id_int,
                     content=d.get("content") or "",
                     status=status,
-                    created_at=d.get("created_at") or datetime.utcnow().isoformat(),
-                    updated_at=d.get("updated_at") or datetime.utcnow().isoformat(),
+                    created_at=d.get("created_at") or datetime.now().isoformat(),
+                    updated_at=d.get("updated_at") or datetime.now().isoformat(),
                     metadata=d.get("metadata") or {},
                     responses=d.get("responses") or [],
                     claimed_by=d.get("claimed_by"),
@@ -281,140 +282,214 @@ class TODOTool(Tool):
                 )
                 reconstructed.append(ti)
             self._items = reconstructed
-
-    def parse_input(self, input: str) -> Tuple[str, Dict[str, Any]]:
-        """解析输入，优先解析 JSON 格式，否则尝试命令式解析。
-
-        返回 (op, params_dict)
-        """
-        s = input.strip()
-        # 尝试 JSON
+            
+    def _run_op(self, op: Optional[str], params: Dict[str, Any]) -> Dict[str, Any]:
+        """基于归一化的 op/params 执行具体操作，返回与旧 run() 相同风格的结果 dict。"""
         try:
-            obj = json.loads(s)
-            if not isinstance(obj, dict):
-                raise ValueError("json must be an object")
-            op = obj.get("op")
-            if not op:
-                raise ValueError("missing op in json")
-            params: Dict[str, Any] = obj.copy()
-            params.pop("op", None)
-            return op.lower(), params
-        except Exception:
-            # 命令式解析： op arg...
-            parts = s.split()
-            if not parts:
-                raise ValueError("empty input")
-            op = parts[0].lower()
-            if op == "add":
-                content = s[len(parts[0]) :].strip()
-                if not content:
-                    raise ValueError("add requires content")
-                return "add", {"content": content}
-            if op in ("get", "delete"):
-                if len(parts) < 2:
-                    raise ValueError(f"{op} requires id")
-                try:
-                    item_id = int(parts[1])
-                except Exception:
-                    raise ValueError(f"invalid id: {parts[1]}")
-                return op, {"id": item_id}
-            if op == "list":
-                # 支持 list [status]
-                status = parts[1] if len(parts) > 1 else None
-                return "list", {"status": status}
-            if op == "update":
-                # 支持: update <id> [status=STATUS] [content=...]
-                if len(parts) < 2:
-                    raise ValueError("update requires id")
-                try:
-                    item_id = int(parts[1])
-                except Exception:
-                    raise ValueError(f"invalid id: {parts[1]}")
-                params: Dict[str, Any] = {"id": item_id}
-                rest = " ".join(parts[2:]) if len(parts) > 2 else ""
-                # 简单解析 key=value 对或追加为 content
-                tokens = rest.split()
-                content_parts: List[str] = []
-                for token in tokens:
-                    if "=" in token:
-                        k, v = token.split("=", 1)
-                        if k == "status":
-                            params["status"] = v
-                        elif k == "content":
-                            params["content"] = v
-                        else:
-                            params[k] = v
-                    else:
-                        content_parts.append(token)
-                if content_parts and "content" not in params:
-                    params["content"] = " ".join(content_parts)
-                return "update", params
-            raise ValueError(f"unknown operation: {op}")
-
-    def run(self, input: str) -> str:
-        try:
-            op, params = self.parse_input(input)
-        except Exception as e:
-            return json.dumps({"ok": False, "error": f"parse error: {str(e)}"}, ensure_ascii=False)
-
-        try:
-            if op == "add":
-                content = params.get("content")
+            if op == 'add':
+                content = params.get('content') or params.get('raw_str') or params.get('input')
                 if not isinstance(content, str):
-                    raise ValueError("add requires content string")
-                metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else None
-                res = self.add(content, metadata)
-            elif op == "get":
-                id_val = params.get("id")
+                    raise ValueError('add requires content string')
+                metadata = params.get('metadata') if isinstance(params.get('metadata'), dict) else None
+                return self.add(content, metadata)
+
+            if op == 'get':
+                id_val = params.get('id')
                 if id_val is None:
-                    raise ValueError("get requires id")
-                res = self.get(int(id_val))
-            elif op == "list":
-                status_val = params.get("status")
+                    raise ValueError('get requires id')
+                return self.get(int(id_val))
+
+            if op == 'list':
+                status_val = params.get('status')
                 if status_val is not None and not isinstance(status_val, str):
                     status_val = str(status_val)
-                res = self.list(status_val)
-            elif op == "update":
-                id_val = params.get("id")
-                if id_val is None:
-                    raise ValueError("update requires id")
-                content = params.get("content")
-                status_val = params.get("status")
-                metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else None
-                res = self.update(int(id_val), content if isinstance(content, str) else None, status_val if isinstance(status_val, str) else None, metadata)
-            elif op == "delete":
-                id_val = params.get("id")
-                if id_val is None:
-                    raise ValueError("delete requires id")
-                res = self.delete(int(id_val))
-            elif op == "claim":
-                id_val = params.get("id")
-                if id_val is None:
-                    raise ValueError("claim requires id")
-                by = params.get("by")
-                res = self.claim(int(id_val), by)
-            elif op == "release":
-                id_val = params.get("id")
-                if id_val is None:
-                    raise ValueError("release requires id")
-                by = params.get("by")
-                res = self.release(int(id_val), by)
-            elif op == "add_response":
-                id_val = params.get("id")
-                if id_val is None:
-                    raise ValueError("add_response requires id")
-                response = params.get("response")
-                if response is None:
-                    raise ValueError("add_response requires response")
-                by = params.get("by")
-                metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else None
-                res = self.add_response(int(id_val), response, by, metadata)
-            else:
-                res = {"ok": False, "error": f"unsupported op: {op}"}
-        except Exception as e:
-            res = {"ok": False, "error": f"execution error: {str(e)}"}
+                return self.list(status_val)
 
-        return json.dumps(res, ensure_ascii=False)
+            if op == 'update':
+                id_val = params.get('id')
+                if id_val is None:
+                    raise ValueError('update requires id')
+                content = params.get('content')
+                status_val = params.get('status')
+                metadata = params.get('metadata') if isinstance(params.get('metadata'), dict) else None
+                return self.update(int(id_val), content if isinstance(content, str) else None, status_val if isinstance(status_val, str) else None, metadata)
+
+            if op == 'delete':
+                id_val = params.get('id')
+                if id_val is None:
+                    raise ValueError('delete requires id')
+                return self.delete(int(id_val))
+
+            if op == 'claim':
+                id_val = params.get('id')
+                if id_val is None:
+                    raise ValueError('claim requires id')
+                by = params.get('by')
+                return self.claim(int(id_val), by)
+
+            if op == 'release':
+                id_val = params.get('id')
+                if id_val is None:
+                    raise ValueError('release requires id')
+                by = params.get('by')
+                return self.release(int(id_val), by)
+
+            if op == 'add_response':
+                id_val = params.get('id')
+                if id_val is None:
+                    raise ValueError('add_response requires id')
+                response = params.get('response')
+                if response is None:
+                    raise ValueError('add_response requires response')
+                by = params.get('by')
+                metadata = params.get('metadata') if isinstance(params.get('metadata'), dict) else None
+                return self.add_response(int(id_val), response, by, metadata)
+
+            return {"ok": False, "error": f"unsupported op: {op}"}
+        except Exception as e:
+            return {"ok": False, "error": f"execution error: {str(e)}"}
+
+    
+
+    def run(self, tool_message: ToolMessage) -> ToolResult:
+        """只接受 `ToolMessage` 对象，并返回 `ToolResult`。
+
+        要求示例：
+        {"type":"tool","tool_name":"TODO","tool_input":{"op":"add","content":"买菜"},"phase":"call"}
+        """
+        start = datetime.now()
+
+        # 严格校验为 ToolMessage 对象
+        try:
+            tm = validate_tool_message(tool_message)
+        except Exception as e:
+            err = f"invalid input: {str(e)}"
+            return ToolResult(
+                tool_name="TODO",
+                status="error",
+                output=None,
+                original_input=tool_message,
+                nl=err,
+                error_message=err,
+                timestamp=datetime.now().isoformat(),
+                duration_ms=0,
+            )
+
+        # 支持两种输入：
+        # 1) 单操作：{"op":"add",...}
+        # 2) 批量操作：{"ops":[{"op":"add",...},{...}]} 或直接传入 [{"op":...}, ...]
+        tool_input = tm.tool_input
+        ops: List[Dict[str, Any]] = []
+
+        if isinstance(tool_input, dict) and "op" in tool_input:
+            ops = [tool_input]
+        elif isinstance(tool_input, dict) and isinstance(tool_input.get("ops"), list):
+            raw_ops = tool_input.get("ops") or []
+            ops = [op for op in raw_ops if isinstance(op, dict)]
+        elif isinstance(tool_input, list):
+            ops = [op for op in tool_input if isinstance(op, dict)]
+
+        if not ops:
+            err = (
+                "invalid tool_input: expected {'op':...} or {'ops':[{'op':...}, ...]} "
+                "or a list of operation objects."
+            )
+            return ToolResult(
+                tool_name="TODO",
+                status="error",
+                output=None,
+                original_input=tm,
+                nl=err,
+                error_message=err,
+                timestamp=datetime.now().isoformat(),
+                duration_ms=0,
+            )
+
+        # 单操作：保持原有返回语义，兼容现有调用方
+        if len(ops) == 1:
+            op_obj = ops[0]
+            op = str(op_obj.get("op", "")).lower()
+            params = {k: v for k, v in op_obj.items() if k != "op"}
+            res = self._run_op(op, params)
+        else:
+            # 批量操作：顺序执行，每步都返回结构化结果
+            batch_results: List[Dict[str, Any]] = []
+            ok_count = 0
+            for idx, op_obj in enumerate(ops):
+                op = str(op_obj.get("op", "")).lower()
+                params = {k: v for k, v in op_obj.items() if k != "op"}
+                one = self._run_op(op, params)
+                one_ok = isinstance(one, dict) and bool(one.get("ok"))
+                if one_ok:
+                    ok_count += 1
+                batch_results.append(
+                    {
+                        "index": idx,
+                        "op": op,
+                        "ok": one_ok,
+                        "result": one,
+                    }
+                )
+
+            res = {
+                "ok": ok_count == len(ops),
+                "batch": True,
+                "total": len(ops),
+                "ok_count": ok_count,
+                "error_count": len(ops) - ok_count,
+                "results": batch_results,
+            }
+
+        end = datetime.now()
+        duration_ms = int((end - start).total_seconds() * 1000)
+        status = "ok" if isinstance(res, dict) and res.get("ok") else "error"
+        output = None
+        if isinstance(res, dict):
+            if 'item' in res:
+                output = res.get('item')
+            elif 'items' in res:
+                output = res.get('items')
+            elif 'batch' in res:
+                output = {
+                    "batch": True,
+                    "total": res.get("total", 0),
+                    "ok_count": res.get("ok_count", 0),
+                    "error_count": res.get("error_count", 0),
+                    "results": res.get("results", []),
+                }
+            else:
+                output = res
+        else:
+            output = res
+
+        if isinstance(res, dict) and res.get('ok'):
+            if 'id' in res:
+                nl = f"ok id={res.get('id')}"
+            elif res.get("batch"):
+                nl = f"batch ok {res.get('ok_count', 0)}/{res.get('total', 0)}"
+            elif isinstance(output, list):
+                nl = f"返回 {len(output)} 条"
+            else:
+                nl = "ok"
+        else:
+            if isinstance(res, dict) and res.get("batch"):
+                nl = f"batch partial {res.get('ok_count', 0)}/{res.get('total', 0)}"
+            else:
+                nl = res.get('error') if isinstance(res, dict) else str(res)
+
+        tool_result = {
+            "version": "1.0",
+            "tool_name": "TODO",
+            "status": status,
+            "output": output,
+            "original_input": tm.tool_input,
+            "nl": nl,
+            "error_message": None if status == 'ok' else (res.get('error') if isinstance(res, dict) else str(res)),
+            "timestamp": end.isoformat(),
+            "duration_ms": duration_ms,
+        }
+
+        return ToolResult.from_dict(tool_result)
     
     def format_item(self, item: Union[TODOItem, Dict[str, Any]]) -> str:
         """返回一个简短的人类可读字符串表示，用于可视化展示。"""
@@ -461,27 +536,11 @@ class TODOTool(Tool):
 
     @classmethod
     def description(cls) -> str:
+        # 支持单操作与批量操作
         return (
-            "TODO 工具 — JSON 输入说明：\n"
-            "请求必须为 JSON 对象，顶层字段：\n"
-            "- \"op\" (必需)：取值为 \"add\" / \"get\" / \"list\" / \"update\" / \"delete\"。\n"
-            "- 其余字段按操作直接放在顶层（不要嵌套在 \"params\"）。\n\n"
-            "示例 JSON 格式：\n"
-            "1) 新增任务 add：\n"
-            "   {\"op\":\"add\",\"content\":\"买菜\",\"metadata\":{...}}\n"
-            "2) 查询任务 get：\n"
-            "   {\"op\":\"get\",\"id\":123}\n"
-            "3) 列表 list（可选按状态过滤）：\n"
-            "   {\"op\":\"list\"} 或 {\"op\":\"list\",\"status\":\"PENDING\"}\n"
-            "4) 更新任务 update：\n"
-            "   {\"op\":\"update\",\"id\":123,\"content\":\"新描述\",\"status\":\"COMPLETED\",\"metadata\":{...}}\n"
-            "5) 删除任务 delete：\n"
-            "   {\"op\":\"delete\",\"id\":123}\n\n"
-            "字段说明：\n"
-            "- content：字符串。\n"
-            "- id：整数。\n"
-            "- status：字符串，取值为 PENDING / IN_PROGRESS / COMPLETED / CANCELLED。\n"
-            "- metadata：可选对象，用于放置附加信息。\n\n"
-            "返回：工具将返回 JSON 字符串，例如 {\"ok\":true,\"id\":1,\"item\":{...}} 或 {\"ok\":false,\"error\":\"...\"}。\n"
-            "说明：工具仍兼容简单命令式文本（例如：add 买菜）作为回退，但请优先使用上述 JSON 格式以确保解析一致性。"
+            "TODO 工具 — 简要说明：\n"
+            "输入为 ToolMessage 风格 JSON（type=\"tool\"）。支持两种 tool_input：\n"
+            "1) 单操作：{\"op\":\"add\",\"content\":\"买菜\"}\n"
+            "2) 批量：{\"ops\":[{\"op\":\"add\",\"content\":\"A\"},{\"op\":\"add\",\"content\":\"B\"}]}\n"
+            "批量返回 output.batch=true，并包含 total/ok_count/error_count/results。"
         )

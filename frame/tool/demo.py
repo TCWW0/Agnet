@@ -7,7 +7,9 @@ def main() -> None:
     registry.register(Calculator())
     print("Available tools:", registry.list_tools())
     print("Calculator description:", registry.describe("Calculator"))
-    print("Example: add 2 3 ->", registry.invoke("Calculator", "add 2 3"))
+    example_msg = {"type": "tool", "tool_name": "Calculator", "tool_input": {"operation": "add", "operand1": 2, "operand2": 3}, "phase": "call"}
+    result = registry.invoke("Calculator", example_msg)
+    print("Example: add 2 3 ->", result.to_json(ensure_ascii=False))
 
 if __name__ == "__main__":
     main()

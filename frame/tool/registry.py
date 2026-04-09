@@ -3,11 +3,11 @@
 提供注册、列举、描述和调用接口，便于 Agent 在运行时查询与调用工具。
 """
 from typing import Dict, List, Optional
-import json
 import time
 
 from frame.tool.base import Tool
-from frame.core.tool_protocol import normalize_tool_result, ToolResult
+from frame.core.tool_protocol import normalize_tool_result
+from frame.core.message import ToolMessage, ToolResult
 
 class ToolRegistry:
     def __init__(self):
@@ -31,11 +31,11 @@ class ToolRegistry:
         except Exception:
             return t.description_ if hasattr(t, "description_") else ""
 
-    def invoke(self, name: str, input_str: str) -> str:
-        """Invoke a registered tool and return a JSON string conforming to ToolResult schema.
+    def invoke(self, name: str, tool_message: ToolMessage) -> ToolResult:
+        """Invoke a registered tool using a ToolMessage object and return ToolResult.
 
-        - Ensures the returned value is a JSON-serialized ToolResult dict.
-        - Normalizes legacy outputs via `normalize_tool_result`.
+        Strict mode: `tool_message` must be a ToolMessage object.
+        The underlying `Tool.run` is expected to return a ToolResult object.
         """
         t = self.get(name)
         if not t:
@@ -43,22 +43,14 @@ class ToolRegistry:
 
         start = time.time()
         try:
-            raw = t.run(input_str)
+            raw = t.run(tool_message)
         except Exception as e:
-            tr = ToolResult(tool_name=name, status="error", error_message=str(e), original_input=input_str)
+            tr = ToolResult(tool_name=name, status="error", error_message=str(e), original_input=tool_message)
             tr.duration_ms = int((time.time() - start) * 1000)
-            return json.dumps(tr.to_dict(), ensure_ascii=False)
+            return tr
 
-        # If tool returned a JSON string representing a dict, try to parse it
-        if isinstance(raw, str):
-            try:
-                parsed = json.loads(raw)
-                raw = parsed
-            except Exception:
-                # leave raw as string
-                pass
-
-        tr = normalize_tool_result(raw, tool_name=name, original_input=input_str)
+        # Normalize tool result (raw is expected to be a ToolResult)
+        tr = normalize_tool_result(raw, tool_name=name, original_input=tool_message.tool_input)
         if not tr.tool_name:
             tr.tool_name = name
         # ensure duration is filled
@@ -75,7 +67,11 @@ class ToolRegistry:
             except Exception:
                 tr.nl = None
 
-        return json.dumps(tr.to_dict(), ensure_ascii=False)
+        return tr
+
+    def invoke_json(self, name: str, tool_message: ToolMessage) -> str:
+        """边界层序列化：返回 JSON 字符串，供旧调用方或日志使用。"""
+        return self.invoke(name, tool_message).to_json(ensure_ascii=False)
     
     def describe_all(self) -> str:
         descriptions = []

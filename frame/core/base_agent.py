@@ -24,57 +24,18 @@ class BaseAgent(ABC):
         self.llm_ = llm
         self.logger_ = logger
         # 历史以 `Message` / `ToolMessage` 对象列表为主，便于在代码中按类型处理
-        # 迁移策略：append_history 接受 Message | ToolMessage | dict | str
         self.history: List[Message] = []
         self.sys_prompt_ = None # 先不进行初始化
 
-    def append_history(self, msg: Union[Message, ToolMessage, dict, str]):
-        """将一条消息追加到历史，内部以 `Message`/`ToolMessage` 对象存储。
+    def append_history(self, msg: Union[Message, ToolMessage]):
+        """将一条消息追加到历史。
 
-        支持输入类型：
-        - `Message` / `ToolMessage`：直接追加
-        - `dict`：通过 `Message.from_dict`/`ToolMessage.from_dict` 解析
-        - `str`：优先尝试 JSON 解析（支持数组/对象），否则封装为 `Message`（聊天消息）
+        语义化约束：历史层只接受已解析完成的 `Message` / `ToolMessage` 对象。
+        边界层若拿到 dict 或 str，应先显式调用对应的 `from_dict` / `from_json`。
         """
-        # 已经是对象，直接追加
-        if isinstance(msg, (Message, ToolMessage)):
-            self.history.append(msg)
-            return
-
-        # dict -> 反序列化为相应消息对象
-        if isinstance(msg, dict):
-            try:
-                m = Message.from_dict(msg)
-                self.history.append(m)
-            except Exception:
-                # 最后兜底：把 dict 作为聊天消息的 content 字段
-                m = Message(role="assistant", action="final", content=str(msg))
-                self.history.append(m)
-            return
-
-        # str -> 先尝试 JSON 解析为 Message(s)
-        if isinstance(msg, str):
-            try:
-                parsed = Message.from_json(msg)
-                if isinstance(parsed, list):
-                    for p in parsed:
-                        if isinstance(p, (Message, ToolMessage)):
-                            self.history.append(p)
-                        elif isinstance(p, dict):
-                            try:
-                                self.history.append(Message.from_dict(p))
-                            except Exception:
-                                self.history.append(Message(role="assistant", action="final", content=str(p)))
-                    return
-                if isinstance(parsed, (Message, ToolMessage)):
-                    self.history.append(parsed)
-                    return
-            except Exception:
-                pass
-
-            # 非 JSON 文本 -> 按聊天消息存储（向后兼容）
-            self.history.append(Message(role="assistant", action="final", content=msg))
-            return
+        if not isinstance(msg, (Message, ToolMessage)):
+            raise TypeError("append_history expects a Message or ToolMessage object")
+        self.history.append(msg)
 
     def build_prompt(self) -> str:
         """把历史消息转为用于 LLM 的提示字符串（每条一行）。

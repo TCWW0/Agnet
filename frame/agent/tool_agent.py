@@ -1,9 +1,9 @@
-"""能够进行工具调用的 Agent（与新 ToolResult/ToolRegistry 协议兼容）。
+"""能够进行工具调用的 Agent（与 ToolResult/ToolRegistry 协议兼容）。
 
 设计要点：
-- 使用 `ToolRegistry.invoke()` 执行工具，保证该层返回 JSON 字符串（ToolResult 协议）。
-- 将工具返回作为系统消息追加到历史（action="tool_result"，content 为 JSON 字符串）。
-- 支持两种工具调用输入：`ToolMessage`（phase=="call"）或 `Message`（action=="tool_call" 且 content 为 JSON 字符串）。
+- 使用 `ToolRegistry.invoke()` 执行工具，核心路径返回 `ToolResult` 对象。
+- 将工具返回序列化为 JSON 追加到历史（action="tool_result"）。
+- 支持两种工具调用输入：`ToolMessage`（phase=="call"）或 `Message`（action="tool_call" 且 content 为 JSON 字符串）。
 """
 from typing import Optional, List
 import json
@@ -15,7 +15,6 @@ from frame.tool import Calculator, ToolRegistry
 from frame.core.prompts import TOOL_SYSTEM_PROMPT
 from frame.core.message import Message, ToolMessage
 from frame.core.logger import Logger, Level
-
 
 class ToolAgent(BaseAgent):
    def __init__(
@@ -103,15 +102,11 @@ class ToolAgent(BaseAgent):
             # 工具调用：支持 ToolMessage（phase==call）或 Message(action==tool_call 且 content 为 JSON)
             if isinstance(m, ToolMessage) and m.phase == "call":
                tool_name = m.tool_name
-               tool_input = m.tool_input if isinstance(m.tool_input, str) else json.dumps(m.tool_input, ensure_ascii=False)
+               tool_msg = ToolMessage(tool_name=tool_name, tool_input=m.tool_input, phase="call", raw=m.raw, metadata=m.metadata)
                try:
-                  res_json = self.tool_registry.invoke(tool_name, tool_input)
-                  # 把自然语言摘要放在前面，后面跟上原始 JSON 响应（单行）以便模型更容易识别工具结果
-                  try:
-                     tr = json.loads(res_json)
-                     nl = tr.get("nl") if isinstance(tr, dict) else None
-                  except Exception:
-                     nl = None
+                  tr = self.tool_registry.invoke(tool_name, tool_msg)
+                  res_json = tr.to_json(ensure_ascii=False)
+                  nl = tr.nl
                   content = f"{nl} {res_json}" if nl else res_json
                   self.append_history(Message(role="system", action="tool_result", content=content))
                except Exception as e:
@@ -136,12 +131,10 @@ class ToolAgent(BaseAgent):
                   continue
 
                try:
-                  res_json = self.tool_registry.invoke(tool_name, tool_input)
-                  try:
-                     tr = json.loads(res_json)
-                     nl = tr.get("nl") if isinstance(tr, dict) else None
-                  except Exception:
-                     nl = None
+                  tool_msg = ToolMessage(tool_name=tool_name, tool_input=tool_input, phase="call", raw=m.content)
+                  tr = self.tool_registry.invoke(tool_name, tool_msg)
+                  res_json = tr.to_json(ensure_ascii=False)
+                  nl = tr.nl
                   content = f"{nl} {res_json}" if nl else res_json
                   self.append_history(Message(role="system", action="tool_result", content=content))
                except Exception as e:

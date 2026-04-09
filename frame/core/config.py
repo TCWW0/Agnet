@@ -4,12 +4,23 @@ import dotenv
 dotenv.load_dotenv(dotenv.find_dotenv())
 
 class LLMConfig:
-    def __init__(self, model_id: str, api_key: str, base_url: str, timeout: int,max_rounds: int):
+    def __init__(
+        self,
+        model_id: str,
+        api_key: str,
+        base_url: str,
+        timeout: int,
+        max_rounds: int,
+        retry_attempts: int = 3,
+        retry_backoff_seconds: float = 0.8,
+    ):
         self.model_id_ = model_id
         self.api_key_ = api_key
         self.base_url_ = base_url
         self.timeout_ = timeout
         self.max_rounds_ = max_rounds
+        self.retry_attempts_ = retry_attempts
+        self.retry_backoff_seconds_ = retry_backoff_seconds
 
     @classmethod
     def from_env(cls):
@@ -18,7 +29,17 @@ class LLMConfig:
         base_url = os.getenv("LLM_BASE_URL", "https://api.your-llm-provider.com/v1")
         timeout = int(os.getenv("LLM_TIMEOUT", 60))
         max_rounds = int(os.getenv("LLM_MAX_ROUNDS", 5))
-        return cls(model_id, api_key, base_url, timeout, max_rounds)
+        retry_attempts = int(os.getenv("LLM_RETRY_ATTEMPTS", 3))
+        retry_backoff_seconds = float(os.getenv("LLM_RETRY_BACKOFF_SECONDS", 0.8))
+        return cls(
+            model_id,
+            api_key,
+            base_url,
+            timeout,
+            max_rounds,
+            retry_attempts=retry_attempts,
+            retry_backoff_seconds=retry_backoff_seconds,
+        )
 
 llmConfig = LLMConfig.from_env()
 
@@ -28,5 +49,5 @@ class AgentConfig:
 
     @classmethod
     def from_env(cls):
-        max_rounds = int(os.getenv("AGENT_MAX_ROUNDS", 5))
+        max_rounds = int(os.getenv("AGENT_MAX_ROUNDS", 15))
         return cls(max_rounds)
