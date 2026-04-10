@@ -104,3 +104,29 @@ def test_todo_agent_can_handle_batch_tool_call(monkeypatch, tmp_path):
     assert "学习RAII" in contents
     assert "学习unique_ptr" in contents
     assert "学习shared_ptr" in contents
+
+
+def test_todo_agent_forces_decomposition_for_knowledge_question(monkeypatch, tmp_path):
+    responses = [
+        "final 这是知识问答，无需生成待办，请直接查看答案。",
+        'tool_call {"name":"TODO","input":{"ops":[{"op":"add","content":"理解智能指针的核心概念"},{"op":"add","content":"说明 unique_ptr 的所有权语义"},{"op":"add","content":"总结使用场景与注意事项"}]}}',
+        "final 已创建 3 条待办",
+    ]
+    agent = _build_agent(monkeypatch, tmp_path, responses)
+
+    prompt = agent.init_sys_prompt()
+    assert "知识问答" in prompt
+    assert "无论输入" in prompt
+
+    final_text = agent.think("请给我介绍一下C++中的智能指针")
+    assert "已创建 3 条待办" in final_text
+
+    list_result = agent.tool_registry.invoke(
+        "TODO",
+        ToolMessage(tool_name="TODO", tool_input={"op": "list"}, phase="call"),
+    )
+    assert list_result.status == "ok"
+    contents = [it.get("content") for it in list_result.output if isinstance(it, dict)]
+    assert "理解智能指针的核心概念" in contents
+    assert "说明 unique_ptr 的所有权语义" in contents
+    assert "总结使用场景与注意事项" in contents

@@ -7,6 +7,7 @@ class LLMConfig:
     def __init__(
         self,
         model_id: str,
+        origanization: str,
         api_key: str,
         base_url: str,
         timeout: int,
@@ -15,6 +16,7 @@ class LLMConfig:
         retry_backoff_seconds: float = 0.8,
     ):
         self.model_id_ = model_id
+        self.origanization_ = origanization
         self.api_key_ = api_key
         self.base_url_ = base_url
         self.timeout_ = timeout
@@ -31,8 +33,10 @@ class LLMConfig:
         max_rounds = int(os.getenv("LLM_MAX_ROUNDS", 5))
         retry_attempts = int(os.getenv("LLM_RETRY_ATTEMPTS", 3))
         retry_backoff_seconds = float(os.getenv("LLM_RETRY_BACKOFF_SECONDS", 0.8))
+        origanization = os.getenv("LLM_ORGANIZATION", "")
         return cls(
             model_id,
+            origanization,
             api_key,
             base_url,
             timeout,

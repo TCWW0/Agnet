@@ -1,16 +1,16 @@
 """实现简单的LLM适配层，基础意图为通过一个统一接口来提供LLM服务"""
-from .config import LLMConfig
+from frame.core.config import LLMConfig
 from openai import OpenAI
 import logging
 import random
 import time
 from typing import Any, Optional
 
-
 class LLMClient:
     def __init__(self, config: LLMConfig, client: Optional[Any] = None):
         self.config = config
         self.client = client or OpenAI(
+            organization=self.config.origanization_,
             api_key=self.config.api_key_,
             base_url=self.config.base_url_,
             timeout=self.config.timeout_
@@ -85,4 +85,4 @@ if __name__ == "__main__":
     config = LLMConfig.from_env()
     llm_client = LLMClient(config)
     response = llm_client.invoke("请介绍一下你自己。")
-    logging.getLogger("frame.core.llm").info(response)
+    print("LLM 响应:", response)
