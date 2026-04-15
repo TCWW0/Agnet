@@ -1,0 +1,7 @@
+[-] [2026-04-14T03:15:29.217Z] [TestLLMInvoke:test_invoke:21] [DEBUG]: Payload for LLM: {'model': 'llama3', 'messages': [{'role': 'system', 'content': 'You are a helpful assistant.'}, {'role': 'user', 'content': 'What is the capital of France?'}]}
+[-] [2026-04-14T03:51:27.776Z] [BaseLLM:invoke:209] [WARNING]: LLM invoke failed, attempt=1 err=Error code: 502
+[-] [2026-04-14T03:51:35.243Z] [BaseLLM:invoke:209] [WARNING]: LLM invoke failed, attempt=2 err=Error code: 502
+[-] [2026-04-14T03:53:28.741Z] [BaseLLM:invoke:209] [WARNING]: LLM invoke failed, attempt=1 err=Error code: 502
+[-] [2026-04-14T03:53:35.791Z] [BaseLLM:invoke:209] [WARNING]: LLM invoke failed, attempt=2 err=Error code: 502
+[-] [2026-04-14T12:13:37.892Z] [BaseLLM:invoke:28] [INFO]: LLM response's size: 1
+[-] [2026-04-14T12:17:39.903Z] [BaseLLM:invoke:28] [INFO]: LLM response's size: 1
