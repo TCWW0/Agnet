@@ -1,4 +1,4 @@
-from base import BaseTool,ToolDesc
+from frame.tool.base import BaseTool, ToolDesc
 from typing import List
 
 class ToolRegistry:

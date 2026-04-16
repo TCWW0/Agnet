@@ -1,25 +1,37 @@
-import json
-
-from frame.core.message import SystemMessage, UserMessage, FunctionMessage
+from frame.core.message import LLMResponseFunCallMsg, ToolResponseMessage
 
 
-def run():
-    m1 = SystemMessage('sys')
-    assert m1.to_openai_dict() == {'role': 'system', 'content': 'sys'}
-
-    m2 = UserMessage({'foo': 'bar'})
-    d2 = m2.to_openai_dict()
-    assert d2['role'] == 'user'
-    assert json.loads(d2['content']) == {'foo': 'bar'}
-
-    m3 = FunctionMessage(name='f', content={'ok': True})
-    d3 = m3.to_openai_dict()
-    assert d3['role'] == 'function'
-    assert d3['name'] == 'f'
-    assert json.loads(d3['content']) == {'ok': True}
-
-    print('OK')
+def test_function_call_msg_from_raw() -> None:
+    msg = LLMResponseFunCallMsg.from_raw(
+        tool_name="calculater",
+        call_id="call_1",
+        arguments_json='{"operand1": "3", "operand2": "4", "operator": "+"}',
+    )
+    assert msg.role == "assistant"
+    assert msg.type == "function"
+    assert msg.tool_name == "calculater"
+    assert msg.call_id == "call_1"
+    assert msg.arguments["operand1"] == "3"
 
 
-if __name__ == '__main__':
+def test_tool_response_msg_from_tool_result() -> None:
+    msg = ToolResponseMessage.from_tool_result(
+        tool_name="calculater",
+        call_id="call_1",
+        status="success",
+        output="3 + 4 的结果为 7",
+    )
+    assert msg.role == "tool"
+    assert msg.type == "tool_response"
+    assert msg.status == "success"
+    assert msg.content.endswith("7")
+
+
+def run() -> None:
+    test_function_call_msg_from_raw()
+    test_tool_response_msg_from_tool_result()
+    print("OK")
+
+
+if __name__ == "__main__":
     run()
