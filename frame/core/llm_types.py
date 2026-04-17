@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,6 +23,9 @@ class RetryPolicy(BaseModel):
     max_attempts: int = Field(default=1, ge=1)
     backoff_seconds: float = Field(default=0.0, ge=0.0)
 
+
+TextDeltaCallback = Callable[[str], None]
+
 # 一次执行的策略，包含工具调用模式、最大工具调用轮数、重试策略等
 class InvocationPolicy(BaseModel):
     """Execution policy for one LLM invocation."""
@@ -31,6 +34,7 @@ class InvocationPolicy(BaseModel):
     max_tool_rounds: int = Field(default=3, ge=0)
     retry_policy: RetryPolicy = Field(default_factory=RetryPolicy)
     timeout_seconds: Optional[float] = Field(default=None, gt=0.0)
+    failure_strategy_stub: str = "todo"
 
 # 将用户所提供的参数统一包装成一个对象，方便后续扩展和维护
 class InvocationRequest(BaseModel):

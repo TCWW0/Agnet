@@ -1,51 +1,18 @@
 from __future__ import annotations
 
-from typing import Callable, List, Optional
+from typing import List, Optional
 
-from openai import OpenAI, Stream
-from openai.types.responses import Response, ResponseStreamEvent
+from openai import OpenAI
+from openai.types.responses import Response
 
 from frame.core.config import LLMConfig
 from frame.core.llm_orchestrator import LLMInvocationOrchestrator
-from frame.core.llm_types import InvocationPolicy, InvocationRequest, RetryPolicy, ToolCallMode
+from frame.core.llm_types import InvocationPolicy, InvocationRequest, RetryPolicy, TextDeltaCallback, ToolCallMode
 from frame.core.message import LLMResponseFunCallMsg, LLMResponseTextMsg, Message, UserTextMessage
 from frame.core.logger import global_logger
 from frame.core.openai_adapter import OpenAIResponsesAdapter
+from frame.core.text_emitter import DispatchMode, QueueFullStrategy, TextEmitter, default_text_callback
 from frame.tool.base import BaseTool
-
-# 简单的流式输出示例，实际应该自定制
-def on_token(response: str):
-    print(response,end="")
-
-# 用于显示暴露出流式的type的各个关键事件类型，避免使用字符串常量，增加可读性和可维护性
-class EventType:
-    TEXT_DELTA = "response.output_text.delta"
-    TEXT_DONE = "response.output_text.done"
-    COMPLETED = "response.completed"
-
-class StreamPrinter:
-    def __init__(self):
-        self.buffer_:str = ""
-    
-    # 外部可以传入一个buffer_str用于获取最后的完整结果，否则就只是打印流式的结果
-    def handle(self, event: ResponseStreamEvent, buffer: list):
-        t = getattr(event, "type", None)
-
-        if t == EventType.TEXT_DELTA:
-            delta = getattr(event, "delta", None)
-            if delta:
-                self.buffer_ += delta
-                print(delta, end="", flush=True)
-
-        elif t == EventType.TEXT_DONE:
-            print()
-            buffer.append(self.buffer_)
-            self.buffer_ = ""
-
-        elif t == EventType.COMPLETED:
-            buffer.append(self.buffer_)
-            print("\nResponse completed.")
-            self.buffer_ = ""
 
 class BaseLLM:
     def __init__(self, llm_config: LLMConfig, client: Optional[OpenAI] = None):
@@ -55,7 +22,6 @@ class BaseLLM:
             api_key=self.llm_config_.api_key_,
             base_url=self.llm_config_.base_url_,
         )
-        self.stream_printer_ = StreamPrinter()
         self.adapter_ = OpenAIResponsesAdapter(client=self.client_, model_id=self.llm_config_.model_id_)
         self.orchestrator_ = LLMInvocationOrchestrator(adapter=self.adapter_, logger=global_logger)
 
@@ -92,17 +58,51 @@ class BaseLLM:
                         return LLMResponseTextMsg(content=content_item.text) # type: ignore
         return None
 
-    def invoke_streaming(self, messages: List[Message], on_token_callback: Callable[[str], None] = on_token) -> Optional[LLMResponseTextMsg]:
-        response: Stream[ResponseStreamEvent] = self.client_.responses.create(
-            model=self.llm_config_.model_id_,
-            instructions="You are a helpful assistant.",
-            input=self._convert_msgs_to_prompt(messages),
+    def invoke_streaming(
+        self,
+        messages: List[Message],
+        tools: Optional[List[BaseTool]] = None,
+        on_token_callback: TextDeltaCallback = default_text_callback,
+    ) -> Optional[LLMResponseTextMsg]:
+        using_tools = tools or []
+        policy = InvocationPolicy(
+            tool_mode=ToolCallMode.AUTO if using_tools else ToolCallMode.OFF,
+            max_tool_rounds=self.llm_config_.max_rounds_,
+            retry_policy=RetryPolicy(
+                max_attempts=self.llm_config_.retry_attempts_,
+                backoff_seconds=self.llm_config_.retry_backoff_seconds_,
+            ),
+        )
+
+        request = InvocationRequest(
+            messages=messages,
+            tools=using_tools,
+            policy=policy,
             stream=True,
         )
-        buffer = []
-        for event in response:
-            self.stream_printer_.handle(event, buffer)
-        return LLMResponseTextMsg(content="".join(buffer))
+
+        emitter = TextEmitter(
+            callback=on_token_callback,
+            dispatch_mode=DispatchMode.PER_CHAR,
+            max_queue_size=1024,
+            on_queue_full=QueueFullStrategy.BLOCK,
+            logger=global_logger,
+        )
+        try:
+            result = self.orchestrator_.invoke_streaming(request=request, on_text_delta=emitter.emit)
+        finally:
+            emitter.close()
+
+        global_logger.info(
+            "LLM stream response messages=%s, tool_rounds=%s",
+            len(result.emitted_messages),
+            result.total_tool_rounds,
+        )
+
+        text_parts = [msg.content for msg in result.emitted_messages if isinstance(msg, LLMResponseTextMsg)]
+        if not text_parts:
+            return None
+        return LLMResponseTextMsg(content="".join(text_parts))
 
     def _convert_msgs_to_prompt(self, messages: List[Message]) -> str:
         prompt = ""

@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .env
+bin/logs/*
+!bin/logs/.gitkeep

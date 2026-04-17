@@ -10,6 +10,7 @@ from frame.core.llm_types import (
     InvocationResult,
     ParsedResponse,
     RetryPolicy,
+    TextDeltaCallback,
     ToolExecutionRecord,
     ToolCallMode,
 )
@@ -28,17 +29,37 @@ class LLMInvocationOrchestrator:
 
     def invoke(self, request: InvocationRequest) -> InvocationResult:
         if request.stream:
-            raise ValueError("Streaming mode is not supported by orchestrator.invoke yet")
+            return self.invoke_streaming(request=request)
+
+        return self._invoke_impl(request=request, on_text_delta=None, use_stream=False)
+
+    def invoke_streaming(
+        self,
+        request: InvocationRequest,
+        on_text_delta: Optional[TextDeltaCallback] = None,
+    ) -> InvocationResult:
+        if not request.stream:
+            request = request.model_copy(update={"stream": True})
+        return self._invoke_impl(request=request, on_text_delta=on_text_delta, use_stream=True)
+
+    def _invoke_impl(
+        self,
+        request: InvocationRequest,
+        on_text_delta: Optional[TextDeltaCallback],
+        use_stream: bool,
+    ) -> InvocationResult:
 
         result = InvocationResult()
         tool_by_name: Dict[str, BaseTool] = {tool.name: tool for tool in request.tools}
 
-        response = self._invoke_with_retry(
+        # 一层封装屏蔽流式与非流式的调用区别
+        parsed = self._invoke_once(
             request=request,
             input_items=self.adapter_.build_message_input_items(request.messages),
             previous_response_id=None,
+            on_text_delta=on_text_delta,
+            use_stream=use_stream,
         )
-        parsed = self.adapter_.parse_response(response)
         self._merge_parsed_output(result, parsed)
 
         # 如果工具调用模式不是自动，则直接返回结果，不进入工具调用和后续追问的循环，由上层控制工具调用的时机和方式
@@ -53,12 +74,13 @@ class LLMInvocationOrchestrator:
             result.tool_execution_records.extend(records)
             self._append_tool_response_messages(result.emitted_messages, records)
 
-            followup_response = self._invoke_with_retry(
+            parsed = self._invoke_once(
                 request=request,
                 input_items=self.adapter_.build_function_call_outputs(records),
                 previous_response_id=parsed.response_id,
+                on_text_delta=on_text_delta,
+                use_stream=use_stream,
             )
-            parsed = self.adapter_.parse_response(followup_response)
             self._merge_parsed_output(result, parsed)
 
         result.total_tool_rounds = rounds
@@ -68,6 +90,29 @@ class LLMInvocationOrchestrator:
             result.stopped_reason = "completed"
 
         return result
+
+    def _invoke_once(
+        self,
+        request: InvocationRequest,
+        input_items,
+        previous_response_id: Optional[str],
+        on_text_delta: Optional[TextDeltaCallback],
+        use_stream: bool,
+    ) -> ParsedResponse:
+        if use_stream:
+            return self._invoke_stream_with_retry(
+                request=request,
+                input_items=input_items,
+                previous_response_id=previous_response_id,
+                on_text_delta=on_text_delta,
+            )
+
+        response = self._invoke_with_retry(
+            request=request,
+            input_items=input_items,
+            previous_response_id=previous_response_id,
+        )
+        return self.adapter_.parse_response(response)
 
     def _invoke_with_retry(
         self,
@@ -94,6 +139,39 @@ class LLMInvocationOrchestrator:
         if last_error is None:
             raise RuntimeError("LLM invoke failed without explicit exception")
         raise last_error
+
+    def _invoke_stream_with_retry(
+        self,
+        request: InvocationRequest,
+        input_items,
+        previous_response_id: Optional[str],
+        on_text_delta: Optional[TextDeltaCallback],
+    ) -> ParsedResponse:
+        retry: RetryPolicy = request.policy.retry_policy
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, retry.max_attempts + 1):
+            try:
+                stream = self.adapter_.invoke_stream(
+                    request=request,
+                    input_items=input_items,
+                    previous_response_id=previous_response_id,
+                )
+                return self.adapter_.consume_stream(stream, on_text_delta=on_text_delta)
+            except Exception as err:  # pragma: no cover - network exception path
+                last_error = err
+                self.logger_.warning("LLM stream invoke failed, attempt=%s err=%s", attempt, str(err))
+                self._handle_failure_strategy_stub(stage="stream_invoke", error=err)
+                if attempt < retry.max_attempts and retry.backoff_seconds > 0:
+                    time.sleep(retry.backoff_seconds * attempt)
+
+        if last_error is None:
+            raise RuntimeError("LLM stream invoke failed without explicit exception")
+        raise last_error
+
+    def _handle_failure_strategy_stub(self, stage: str, error: Exception) -> None:
+        # TODO: 后续在这里接入可配置失败策略（如 fallback / degrade / skip_tool_round）。
+        self.logger_.warning("Failure strategy stub stage=%s err=%s", stage, str(error))
 
     # 将解析后的文本和工具调用等信息进行合并，方便后续的分发，result将储存最终的输出结果
     def _merge_parsed_output(self, result: InvocationResult, parsed: ParsedResponse) -> None:

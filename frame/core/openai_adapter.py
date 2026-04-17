@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from openai import OpenAI
-from openai.types.responses import Response
+from openai import OpenAI, Stream
+from openai.types.responses import Response, ResponseStreamEvent
 
 from frame.core.llm_types import (
     InvocationRequest,
@@ -13,6 +13,7 @@ from frame.core.llm_types import (
     ParsedResponse,
     ParsedTextChunk,
     ParsedToolCall,
+    TextDeltaCallback,
     ToolExecutionRecord,
     ToolCallMode,
 )
@@ -77,6 +78,29 @@ class OpenAIResponsesAdapter:
 
         return self.client_.responses.create(**payload)
 
+    def invoke_stream(
+        self,
+        request: InvocationRequest,
+        input_items: List[OpenAIInputItem],
+        previous_response_id: Optional[str] = None,
+    ) -> Stream[ResponseStreamEvent]:
+        payload: Dict[str, Any] = {
+            "model": self.model_id_,
+            "input": [item.payload for item in input_items],
+            "stream": True,
+        }
+        if request.instructions:
+            payload["instructions"] = request.instructions
+
+        tool_specs = self.build_tool_specs(request)
+        if tool_specs:
+            payload["tools"] = [item.payload for item in tool_specs]
+
+        if previous_response_id:
+            payload["previous_response_id"] = previous_response_id
+
+        return self.client_.responses.create(**payload)
+
     def parse_response(self, response: Response) -> ParsedResponse:
         parsed = ParsedResponse(response_id=getattr(response, "id", None))
         output_items = getattr(response, "output", None) or [] 
@@ -101,6 +125,49 @@ class OpenAIResponsesAdapter:
                 )
             )
         return items
+
+    def consume_stream(
+        self,
+        stream: Stream[ResponseStreamEvent],
+        on_text_delta: Optional[TextDeltaCallback] = None,
+    ) -> ParsedResponse:
+        completed_response: Optional[Response] = None
+        buffered_text: str = ""
+        text_chunks: List[ParsedTextChunk] = []
+
+        for event in stream:
+            event_type = getattr(event, "type", None)
+            if event_type == "response.output_text.delta":
+                delta = getattr(event, "delta", "")
+                if delta:
+                    buffered_text += delta
+                    if on_text_delta:
+                        on_text_delta(delta)
+                continue
+
+            if event_type == "response.output_text.done":
+                final_text = getattr(event, "text", None) or buffered_text
+                if final_text:
+                    text_chunks.append(ParsedTextChunk(text=final_text))
+                buffered_text = ""
+                continue
+
+            if event_type == "response.completed":
+                event_response = getattr(event, "response", None)
+                if isinstance(event_response, Response):
+                    completed_response = event_response
+
+        if buffered_text:
+            text_chunks.append(ParsedTextChunk(text=buffered_text))
+
+        if completed_response is not None:
+            parsed = self.parse_response(completed_response)
+            if not parsed.texts and text_chunks:
+                parsed.texts.extend(text_chunks)
+            return parsed
+
+        # 极端情况下拿不到 completed 事件，这里做一个保底返回。
+        return ParsedResponse(texts=text_chunks)
 
     def _parse_message_item(self, item: Any, parsed: ParsedResponse) -> None:
         content_items = getattr(item, "content", None) or []
