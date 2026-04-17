@@ -25,6 +25,7 @@ class RetryPolicy(BaseModel):
 
 
 TextDeltaCallback = Callable[[str], None]
+ToolCallCallback = Callable[["ParsedToolCall"], None]
 
 # 一次执行的策略，包含工具调用模式、最大工具调用轮数、重试策略等
 class InvocationPolicy(BaseModel):

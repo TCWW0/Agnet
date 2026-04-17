@@ -25,13 +25,11 @@ class ToolAwareAgent(BaseAgent):
 
     def _think_impl(self, user_input: str):
         self.history_.append(UserTextMessage(content=user_input))
-        message = self.llm_.invoke_streaming(self.history_, self.tool_registry_.get_tools())
+        messages = self.llm_.invoke_streaming(self.history_, self.tool_registry_.get_tools())
 
-        if not message:
+        if not messages:
             print("Agent: (No response)")
             return
-
-        self.history_.append(message)
 
 if __name__ == "__main__":
     llm_config = LLMConfig.from_env()

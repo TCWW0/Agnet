@@ -39,31 +39,12 @@ class BaseLLM:
         global_logger.info("LLM response messages=%s, tool_rounds=%s", len(result.emitted_messages), result.total_tool_rounds)
         return result.emitted_messages
 
-    def invoke_with_request(self, request: InvocationRequest):
-        return self.orchestrator_.invoke(request)
-
-    # TODO：将生成的output中的所有文本内容提取出来，目前先默认只提取第一条文本内容
-    def _extract_response(self, llm_response: Response) -> Optional[LLMResponseTextMsg]:
-        if not llm_response.output:
-            return None
-        
-        # 遍历Output中结构
-        for item in llm_response.output:
-            if getattr(item,"type",None) != "message":
-                continue
-            # 此时可以进入对应的content
-            if getattr(item,"content",None):
-                for content_item in item.content:  # type: ignore 这里不加这个注解会发病
-                    if getattr(content_item,"type",None) == "output_text":
-                        return LLMResponseTextMsg(content=content_item.text) # type: ignore
-        return None
-
     def invoke_streaming(
         self,
         messages: List[Message],
         tools: Optional[List[BaseTool]] = None,
         on_token_callback: TextDeltaCallback = default_text_callback,
-    ) -> Optional[LLMResponseTextMsg]:
+    ) -> List[Message]:
         using_tools = tools or []
         policy = InvocationPolicy(
             tool_mode=ToolCallMode.AUTO if using_tools else ToolCallMode.OFF,
@@ -99,10 +80,7 @@ class BaseLLM:
             result.total_tool_rounds,
         )
 
-        text_parts = [msg.content for msg in result.emitted_messages if isinstance(msg, LLMResponseTextMsg)]
-        if not text_parts:
-            return None
-        return LLMResponseTextMsg(content="".join(text_parts))
+        return result.emitted_messages
 
     def _convert_msgs_to_prompt(self, messages: List[Message]) -> str:
         prompt = ""

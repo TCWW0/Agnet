@@ -56,12 +56,14 @@ def test_base_llm_streaming_uses_text_emitter_char_dispatch() -> None:
     llm.orchestrator_ = _FakeOrchestrator()  # type: ignore[assignment]
     deltas = []
 
-    result = llm.invoke_streaming(
+    messages = llm.invoke_streaming(
         messages=[UserTextMessage(content="hi")],
         tools=[],
         on_token_callback=deltas.append,
     )
 
     assert deltas == ["a", "b", "c", "d"]
-    assert result is not None
-    assert result.content == "abcd"
+    assert messages is not None
+    assert any(isinstance(m, LLMResponseTextMsg) for m in messages)
+    first = next(m for m in messages if isinstance(m, LLMResponseTextMsg))
+    assert first.content == "abcd"

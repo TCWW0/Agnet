@@ -14,10 +14,12 @@ from frame.core.llm_types import (
     ParsedTextChunk,
     ParsedToolCall,
     TextDeltaCallback,
+    ToolCallCallback,
     ToolExecutionRecord,
     ToolCallMode,
 )
 from frame.core.message import Message
+from frame.core.openai_stream_state_machine import OpenAIStreamStateMachine
 
 # OpenAI 适配器，负责将中间层的调用请求转换成 OpenAI API 的输入格式，以及将 OpenAI 的响应解析成中间层可以理解的格式
 class OpenAIResponsesAdapter:
@@ -130,44 +132,34 @@ class OpenAIResponsesAdapter:
         self,
         stream: Stream[ResponseStreamEvent],
         on_text_delta: Optional[TextDeltaCallback] = None,
+        on_tool_call: Optional[ToolCallCallback] = None,
     ) -> ParsedResponse:
-        completed_response: Optional[Response] = None
-        buffered_text: str = ""
-        text_chunks: List[ParsedTextChunk] = []
+        machine = OpenAIStreamStateMachine(on_text_delta=on_text_delta, on_tool_call=on_tool_call)
+        state = machine.consume(stream)
 
-        for event in stream:
-            event_type = getattr(event, "type", None)
-            if event_type == "response.output_text.delta":
-                delta = getattr(event, "delta", "")
-                if delta:
-                    buffered_text += delta
-                    if on_text_delta:
-                        on_text_delta(delta)
+        if state.completed_response is not None:
+            parsed = self.parse_response(state.completed_response)
+        else:
+            # 极端情况下拿不到 completed 事件，这里做一个保底返回。
+            parsed = ParsedResponse()
+
+        if not parsed.texts and state.text_chunks:
+            parsed.texts.extend(state.text_chunks)
+
+        self._merge_stream_tool_calls(parsed, state.tool_calls)
+        return parsed
+
+    def _merge_stream_tool_calls(self, parsed: ParsedResponse, stream_calls: List[ParsedToolCall]) -> None:
+        if not stream_calls:
+            return
+
+        seen_call_ids = {call.call_id for call in parsed.tool_calls if call.call_id}
+        for stream_call in stream_calls:
+            if stream_call.call_id and stream_call.call_id in seen_call_ids:
                 continue
-
-            if event_type == "response.output_text.done":
-                final_text = getattr(event, "text", None) or buffered_text
-                if final_text:
-                    text_chunks.append(ParsedTextChunk(text=final_text))
-                buffered_text = ""
-                continue
-
-            if event_type == "response.completed":
-                event_response = getattr(event, "response", None)
-                if isinstance(event_response, Response):
-                    completed_response = event_response
-
-        if buffered_text:
-            text_chunks.append(ParsedTextChunk(text=buffered_text))
-
-        if completed_response is not None:
-            parsed = self.parse_response(completed_response)
-            if not parsed.texts and text_chunks:
-                parsed.texts.extend(text_chunks)
-            return parsed
-
-        # 极端情况下拿不到 completed 事件，这里做一个保底返回。
-        return ParsedResponse(texts=text_chunks)
+            parsed.tool_calls.append(stream_call)
+            if stream_call.call_id:
+                seen_call_ids.add(stream_call.call_id)
 
     def _parse_message_item(self, item: Any, parsed: ParsedResponse) -> None:
         content_items = getattr(item, "content", None) or []
