@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Chat Demo</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <h2>会话</h2>
+        <button id="new">+ 新建会话</button>
+      </aside>
+      <main class="main">
+        <div id="chat" class="chat"></div>
+        <div class="composer">
+          <textarea id="input" placeholder="请输入消息..."></textarea>
+          <button id="send">发送</button>
+        </div>
+      </main>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>

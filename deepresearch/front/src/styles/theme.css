@@ -1,0 +1,104 @@
+/* Central theme variables: edit these to change sizing and spacing globally */
+:root{
+  --bg: #f6f8fb;
+  --panel: #ffffff;
+  --muted: #f3f4f6;
+  --accent: #2563eb;
+  /* 用户气泡背景与文本颜色（可调） */
+  --bubble-user-bg: #e6eaf3;
+  --bubble-user-text: var(--text);
+  --text: #0f172a;
+  --muted-text: #6b7280;
+  --radius-lg: 18px;
+  --sidebar-width: 260px;
+  --sidebar-collapsed-width: 72px;
+  /* current effective sidebar width (updated dynamically when collapsing) */
+  --sidebar-current-width: var(--sidebar-width);
+  --composer-max-width: 950px;
+  /* composer 最小宽度，防止在窄视口时输入区域过窄 */
+  --composer-min-width: 260px;
+  --composer-max-height: 160px;
+  --composer-vertical-gap: 18px;
+  /* 输入区域底部隔离层高度（用于限制聊天滚动区域） */
+  --composer-occluder-height: 220px;
+
+  /* 额外的聊天底部内边距，用于微调最后一条消息与容器底部的距离（可在此处调整） */
+  --chat-bottom-gap: 24px;
+
+    /* 右侧主内容区左右边界（重点微调项）：
+      - 调大左值：内容整体更靠右
+      - 调大右值：内容整体更靠左
+      可独立设置，便于像素级校准。 */
+    --right-scroll-boundary-left: 24px;
+    --right-scroll-boundary-right: 24px;
+
+    /* 右侧内容最大宽度：消息区与输入区共用，保证视觉统一。 */
+    --right-content-max-width: 950px;
+
+     /* 页面级滚动布局的垂直间距控制。 */
+    --right-content-top-gap: 18px;
+    /* 为固定输入栏保留的透明占位高度，避免消息被遮挡（可按视觉微调）。 */
+     --composer-region-reserved-height: 250px;
+
+     /* 输入栏下方提示区（非透明）高度与字体。 */
+     --composer-bottom-note-height: 4px;
+     --composer-bottom-note-font-size: 12px;
+
+     /* “回到底部”按钮显示判定阈值：
+       当距离底部 <= 此值时，按钮会隐藏。 */
+     --scroll-bottom-threshold: 72px;
+      /* 水平位置与垂直距离控制（便于像素级微调）：
+        --scroll-bottom-button-horizontal-ratio：0~1，表示按钮在可视内容区从左到右的位置比例（0 左对齐，0.5 居中，1 右对齐）。
+        --scroll-bottom-button-distance-from-input：按钮中心相较于输入栏顶部的垂直距离（如 24px 即按钮中心在输入栏上方 24px）。
+        --scroll-bottom-button-vertical-ratio：保留旧兼容项（按滚动区高度比例定位，较少使用）。 */
+      --scroll-bottom-button-horizontal-ratio: 0.5;
+      --scroll-bottom-button-distance-from-input: -70px;
+      --scroll-bottom-button-vertical-ratio: 1;
+
+      /* 输入栏下方提示与输入栏之间的间距（可设为 0 消除缝隙） */
+      --composer-bottom-note-gap: 0px;
+
+  /* 微调：侧边栏最近项文本垂直偏移，增大数值可向下移动文本 */
+  --recent-text-offset: 4px;
+
+  /* 空状态垂直偏移（正值向下移动），使用 translateY 可快速微调 */
+  --empty-state-offset: 140px;
+
+  /* centralized font sizing - change here to tune UI scale */
+  --font-size-base: 17px;
+  --font-size-bubble: 16px;
+   /* 输入区域的字体大小 */
+  --font-size-composer: 20px;
+
+  /* composer min height and controls alignment */
+  --composer-min-height: 48px;
+  --composer-controls-justify: flex-end; /* center | flex-end | flex-start */
+  /* width reserved on the right for controls (keeps textarea right-edge left of the controls column) */
+  --composer-controls-width: 84px; /* adjust to match button size + spacing */
+  /* top-nav background for occlusion while keeping a coordinated look with the right area */
+  --top-nav-bg: var(--bg);
+  --top-nav-backdrop: blur(6px);
+  /* top navigation height */
+  --top-nav-height: 64px;
+  /* 控制聊天面板的最小宽度，避免在窄视口中出现过大的左右留白 */
+  --chat-min-width: 280px;
+  /* 控制消息气泡每行的最大字符数（整数），单位为 ch；调整此值以微调每行字符数 */
+  --bubble-max-ch: 70;
+  /* sidebar avatar sizes */
+  --sidebar-avatar-size: 36px;
+  --sidebar-collapsed-avatar-size: 36px;
+  /* Bubble spacing controls: tweak these to adjust bubble padding and vertical gap globally */
+  --bubble-padding-vertical: 11px; /* top/bottom padding inside each message bubble */
+  --bubble-padding-horizontal: 16px; /* left/right padding inside each message bubble */
+  --bubble-row-vertical-gap: 10px; /* vertical margin between message rows (.msg-row margin) */
+  /* 消息内部段落之间的垂直间距（可微调） */
+  --message-paragraph-gap: 16px;
+
+  /* 助手回复气泡可配置项：字体、行距、字重、字距与段落间距。 */
+  --assistant-response-font-size: 16px;
+  --assistant-response-line-height: 2;
+  --assistant-response-font-family: Inter, system-ui, Segoe UI, Roboto, Arial, sans-serif;
+  --assistant-response-font-weight: 400;
+  --assistant-response-letter-spacing: 1;
+  --assistant-response-paragraph-gap: 16px;
+}

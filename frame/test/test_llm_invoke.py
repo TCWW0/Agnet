@@ -33,7 +33,7 @@ class _FakeAdapter:
         self.stream_invoke_count += 1
         return object()
 
-    def consume_stream(self, stream, on_text_delta=None):
+    def consume_stream(self, stream, on_text_delta=None, on_tool_call=None):
         if self.stream_invoke_count == 1:
             return ParsedResponse(
                 response_id="resp_1",

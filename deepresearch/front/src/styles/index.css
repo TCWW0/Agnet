@@ -1,0 +1,320 @@
+@import './theme.css';
+
+html,body,#root{height:100%}
+body{margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text);font-size:var(--font-size-base);line-height:1.5}
+
+/* Layout helpers */
+.app-shell{min-height:100vh;display:flex}
+.sidebar{width:var(--sidebar-current-width);border-right:1px solid #e6e9ef;background:var(--panel);display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;height:100vh;overflow:auto;z-index:20;padding:0;transition:width .18s ease}
+.main-area{flex:1;display:block;margin-left:var(--sidebar-current-width);min-height:100vh}
+ .main-area{transition:margin-left .18s ease}
+.content-wrap{
+  position:relative;
+  padding-top:calc(var(--top-nav-height) + var(--right-content-top-gap));
+  padding-left:var(--right-scroll-boundary-left);
+  padding-right:var(--right-scroll-boundary-right);
+}
+
+/* 中间为页面级主滚动区域：不再使用内部独立滚动条。 */
+.chat-scroll{
+  min-height:calc(100vh - var(--top-nav-height) - var(--composer-region-reserved-height));
+  overflow:visible;
+}
+
+/* 统一右侧内容宽度，便于后续视觉微调。 */
+.chat-container{
+  width:100%;
+  max-width:var(--right-content-max-width);
+  margin:0 auto;
+}
+
+/* Top navigation spans full right area */
+.top-nav{position:fixed;left:var(--sidebar-current-width);right:0;top:0;height:var(--top-nav-height);background:var(--top-nav-bg);backdrop-filter:var(--top-nav-backdrop);-webkit-backdrop-filter:var(--top-nav-backdrop);z-index:30;display:block;transition:left .18s ease}
+.top-nav > div{width:100%;margin:0;display:flex;align-items:center;justify-content:space-between;padding:12px var(--right-scroll-boundary-right) 12px var(--right-scroll-boundary-left);border-bottom:0;box-sizing:border-box}
+
+/* Chat window */
+.chat-content{height:auto;overflow:visible;padding:28px 0 var(--chat-bottom-gap,24px) 0;box-sizing:border-box;font-size:var(--font-size-bubble)}
+.msg-row{display:flex;margin:var(--bubble-row-vertical-gap) 0}
+.msg-row.user{justify-content:flex-end}
+.bubble{max-width: min(calc(var(--bubble-max-ch) * 1ch), 72%);padding:var(--bubble-padding-vertical) var(--bubble-padding-horizontal);border-radius:var(--radius-lg);box-shadow:0 1px 2px rgba(15,23,42,0.04);white-space:normal;transition:transform .12s ease,box-shadow .12s ease}
+.bubble.assistant{background: rgba(255,255,255,0.02); color:var(--text); border-top-left-radius:12px;border-top-right-radius:16px;border-bottom-right-radius:16px;border:1px solid rgba(15,23,42,0.03); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px)}
+.bubble.user{background:var(--bubble-user-bg);color:var(--bubble-user-text);border-top-left-radius:16px;border-top-right-radius:12px;border-bottom-left-radius:16px;box-shadow:0 1px 2px rgba(15,23,42,0.04);border:1px solid rgba(15,23,42,0.03)}
+.bubble .content{overflow-wrap:anywhere;word-break:break-word;white-space:normal}
+.bubble.user .content{white-space:pre-wrap}
+.bubble .content > :first-child{margin-top:0}
+.bubble .content > :last-child{margin-bottom:0}
+
+/* 助手回复气泡字体与行距：可在 theme.css 中通过变量微调。 */
+.bubble.assistant .content{
+  font-size:var(--assistant-response-font-size);
+  line-height:var(--assistant-response-line-height);
+  font-family:var(--assistant-response-font-family);
+  font-weight:var(--assistant-response-font-weight);
+  letter-spacing:var(--assistant-response-letter-spacing);
+}
+
+/* 消息操作行：与气泡主体保持同一背景风格，避免割裂边界。 */
+.message-actions{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.message-actions .action-btn{border:0;background:rgba(15,23,42,0.06);color:var(--text);font-size:12px;line-height:1;padding:6px 10px;border-radius:999px;cursor:pointer}
+.message-actions .action-btn:hover{background:rgba(15,23,42,0.1)}
+.message-more-panel{display:flex;gap:12px;align-items:center;margin-top:8px;font-size:12px;color:var(--muted-text)}
+
+.avatar{width:36px;height:36px;border-radius:999px;background:#e6eefc;color:var(--accent);display:inline-flex;align-items:center;justify-content:center;font-weight:600;margin-right:10px}
+.avatar.user{margin-left:10px;margin-right:0;background:linear-gradient(180deg,var(--accent),#1e4fd6);color:white}
+
+.meta{margin-top:6px;font-size:12px;color:var(--muted-text)}
+
+/* Composer */
+.composer-region{
+  background:transparent;
+  min-height:var(--composer-region-reserved-height);
+}
+
+/* 第三块输入区域固定在右侧底部；内容区通过 composer-region 留出占位，不产生遮挡。 */
+.composer-fixed-layer{
+  position:fixed;
+  left:calc(var(--sidebar-current-width) + var(--right-scroll-boundary-left));
+  right:var(--right-scroll-boundary-right);
+  bottom:0;
+  z-index:42;
+  pointer-events:none;
+}
+.composer-fixed-layer .chat-container{width:100%;max-width:var(--right-content-max-width);margin:0 auto}
+.composer-fixed-stack{display:flex;flex-direction:column}
+
+.composer{position:static;z-index:1;width:100%;max-width:none;margin:0 auto;padding:12px;display:flex;flex-direction:column;gap:8px;align-items:stretch;background:var(--panel);border-radius:var(--radius-lg);box-shadow:0 8px 30px rgba(15,23,42,0.08);border:1px solid rgba(15,23,42,0.04);pointer-events:auto}
+.composer.multiline{align-items:flex-end}
+.composer textarea{display:block;box-sizing:border-box;width:calc(100% - var(--composer-controls-width));padding:12px 14px;border-radius:calc(var(--radius-lg) - 4px);border:0;min-height:var(--composer-min-height);max-height:var(--composer-max-height);resize:none;font-size:var(--font-size-composer);overflow:auto;background:transparent;outline:none}
+.composer .controls{display:flex;justify-content:var(--composer-controls-justify);padding-top:6px}
+.composer .controls .send-btn{width:44px;height:44px;border-radius:999px;border:0;display:inline-flex;align-items:center;justify-content:center;color:#fff;cursor:pointer}
+.composer .controls .send-btn[disabled]{background:#e5e7eb;color:#9ca3af;cursor:default;box-shadow:none;pointer-events:none}
+.composer .controls .send-btn:not([disabled]){background:#000;color:#fff;box-shadow:0 6px 18px rgba(0,0,0,0.16)}
+.composer .controls .send-btn.stop-btn{background:#dc2626;color:#fff;box-shadow:0 6px 18px rgba(220,38,38,0.28)}
+.composer .controls .send-btn.stop-btn:hover{background:#b91c1c}
+
+/* 输入栏下方不透明提示区：覆盖到页面底部，避免滚动时内容透过缝隙显示。 */
+.composer-bottom-note{
+  min-height:var(--composer-bottom-note-height);
+  background:var(--bg);
+  border-top:1px solid rgba(15,23,42,0.06);
+  color:var(--muted-text);
+  font-size:var(--composer-bottom-note-font-size);
+  line-height:1.4;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:0 12px calc(env(safe-area-inset-bottom, 0px) + 4px) 12px;
+  /* 与输入栏之间的垂直间距，可设为 0 消除缝隙 */
+  margin-top: var(--composer-bottom-note-gap);
+  box-sizing:border-box;
+}
+
+.composer-bottom-note .chat-container{
+  width:100%;
+  max-width:var(--right-content-max-width);
+}
+
+/* 未滚动到底部时显示回到底部按钮；接近底部则隐藏并禁用。 */
+.scroll-to-bottom-btn{
+  position:fixed;
+  /* 水平位置：相对于右侧可视内容区的比例（0~1），0=最左，0.5=居中，1=最右 */
+  left: calc(
+    var(--sidebar-current-width)
+    + var(--right-scroll-boundary-left)
+    + ((100vw - var(--sidebar-current-width) - var(--right-scroll-boundary-left) - var(--right-scroll-boundary-right))
+       * var(--scroll-bottom-button-horizontal-ratio))
+  );
+  /* 垂直位置：以输入栏顶部为基准，按钮中心位于该位置之上 var(--scroll-bottom-button-distance-from-input) */
+  top: calc(
+    (100vh - var(--composer-region-reserved-height))
+    - var(--scroll-bottom-button-distance-from-input)
+  );
+  /* 让 left/top 表示按钮中心点（配合 translate(-50%,-50%)） */
+  transform:translate(-50%, -50%);
+  z-index:43;
+  border:1px solid rgba(15,23,42,0.08);
+  background:#ffffff;
+  color:var(--text);
+  border-radius:999px;
+  padding:8px 14px;
+  font-size:13px;
+  box-shadow:0 6px 20px rgba(15,23,42,0.12);
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .16s ease, transform .16s ease;
+}
+
+.scroll-to-bottom-btn.visible{
+  opacity:1;
+  pointer-events:auto;
+}
+
+.bubble:hover{transform:translateY(-2px)}
+
+/* 将段落 <p> 的默认上下外边距清零
+   作用：
+   - 消除浏览器默认的段落间距（通常是 1em 上下）
+   - 防止出现“段落之间空一大块”的情况
+   修改影响：
+   - 如果去掉这行，段落之间会恢复较大的默认间距
+   - 如果改为 margin: 0.5em，会让每个段落上下都有间距（不推荐，会叠加） */
+.bubble .content p {
+  margin: 0;
+}
+
+/* 控制“相邻段落之间”的间距（只作用于第二个及之后的段落）
+   作用：
+   - 精细控制段落之间的距离，而不是每个段落都加 margin
+   - 避免 margin 叠加问题
+   修改影响：
+   - 调大（如 1em）：段落间距变大
+   - 调小（如 0.2em）：段落更紧凑
+   - 设置为 0：段落完全贴在一起
+   - 使用变量 --message-paragraph-gap 可以全局统一控制 */
+.bubble .content p + p {
+  margin-top: var(--message-paragraph-gap, 0.1em);
+}
+
+/* 助手回复段落间距可以单独配置。 */
+.bubble.assistant .content p + p {
+  margin-top: var(--assistant-response-paragraph-gap, var(--message-paragraph-gap, 0.1em));
+}
+
+/* 去掉最后一个段落的下边距
+   作用：
+   - 防止消息气泡底部出现多余空白
+   修改影响：
+   - 如果删除这条规则，最后一个段落可能会把整个气泡“撑高” */
+.bubble .content p:last-child {
+  margin-bottom: 0;
+}
+
+/* 控制列表（ul/ol）的整体间距和缩进
+   作用：
+   - margin: 控制列表整体与上下内容的距离
+   - padding-left: 控制列表缩进（影响层级感）
+   修改影响：
+   - 增大 margin（如 1em）：列表上下更“松”
+   - 减小 margin（如 0）：列表更紧贴上下内容
+   - 调整 padding-left：
+       大 → 缩进更明显
+       小 → 更贴近左边 */
+.bubble .content ul,
+.bubble .content ol {
+  margin: 0em 0;
+  padding-left: 1.2em;
+}
+
+/* 控制列表项 <li> 之间的间距
+   作用：
+   - 控制每一项之间的垂直距离
+   修改影响：
+   - 调大（如 0.5em）：列表更疏松
+   - 调小（如 0）：列表更紧凑
+   - 如果删除：浏览器会使用默认间距（通常略大） */
+.bubble .content li {
+  margin: 0em 0;
+}
+
+/* Loading dots for streaming assistant replies */
+.loading-dots{display:inline-flex;align-items:center;gap:6px}
+.loading-dots .dot{width:8px;height:8px;border-radius:50%;background:rgba(0,0,0,0.18);opacity:0.4;animation:ld-bounce 1s infinite ease-in-out}
+.loading-dots .dot:nth-child(2){animation-delay:0.12s}
+.loading-dots .dot:nth-child(3){animation-delay:0.24s}
+@keyframes ld-bounce{0%,80%,100%{transform:scale(0.8);opacity:0.5}40%{transform:scale(1.2);opacity:1}}
+
+/* Accessibility fallback: reduce transparency when user prefers reduced transparency */
+@media (prefers-reduced-transparency: reduce){
+	.bubble.assistant{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(255,255,255,0.04)}
+}
+
+/* Sidebar */
+.sidebar .header{padding:12px 12px 6px 12px;border-bottom:1px solid #eef2f7;display:flex;flex-direction:column;align-items:stretch;gap:8px}
+.sidebar .icon-row{width:100%;display:flex;justify-content:flex-start;padding-left:12px}
+
+.header-top{display:flex;align-items:center;justify-content:space-between;width:100%}
+.collapse-btn{width:36px;height:36px;border-radius:8px;border:0;background:transparent;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted-text)}
+.collapse-btn:hover{background:#f3f4f6}
+
+/* collapsed sidebar visuals */
+.sidebar.collapsed{width:var(--sidebar-collapsed-width)}
+.sidebar.collapsed .sidebar-icon{width:40px;height:40px;cursor:pointer}
+.sidebar.collapsed .sidebar-icon:hover{background:#f3f4f6}
+.sidebar.collapsed .sidebar-actions .action .label{display:none}
+.sidebar.collapsed .recent-item .summary{display:none}
+.sidebar.collapsed .recent-list{align-items:center}
+.sidebar.collapsed .sessions{display:none}
+.sidebar.collapsed .icon-row{padding-left:8px}
+.sidebar.collapsed .collapse-btn{display:none}
+.sidebar .sidebar-icon{width:48px;height:48px;border-radius:10px;background:linear-gradient(180deg,#f0f6ff,#ffffff);display:flex;align-items:center;justify-content:center;color:var(--accent);font-weight:700;position:relative;transform-origin:center;transition:transform .18s ease,background .12s ease}
+.sidebar .sidebar-icon svg{width:18px;height:18px}
+.sidebar .sidebar-icon .icon-default,.sidebar .sidebar-icon .icon-expand{position:absolute;inset:0;display:inline-flex;align-items:center;justify-content:center;transition:opacity .12s ease,transform .12s ease}
+.sidebar .sidebar-icon .icon-expand{opacity:0;transform:translateY(-6px) scale(.94)}
+
+/* when collapsed: show default icon normally, but on hover/focus switch to expand icon */
+.sidebar.collapsed .sidebar-icon .icon-default{opacity:1}
+.sidebar.collapsed .sidebar-icon .icon-expand{opacity:0}
+.sidebar.collapsed .sidebar-icon:hover .icon-default,.sidebar.collapsed .sidebar-icon:focus .icon-default{opacity:0}
+.sidebar.collapsed .sidebar-icon:hover .icon-expand,.sidebar.collapsed .sidebar-icon:focus .icon-expand{opacity:1;transform:translateY(0) scale(1)}
+.sidebar .sidebar-actions{display:flex;flex-direction:column;width:100%;gap:8px;padding:6px}
+.sidebar .sidebar-actions .action .icon{width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;margin-right:8px;color:var(--muted-text)}
+.sidebar .sidebar-actions .action .label{vertical-align:middle}
+.sidebar .sidebar-actions .action{display:block;width:100%;padding:10px 12px;border-radius:8px;background:transparent;border:1px solid #eef2f7;color:var(--text);cursor:pointer;font-size:13px;text-align:left;transition:background .12s ease,border-color .12s ease,transform .06s}
+.sidebar .sidebar-actions .action:hover{background:#f3f4f6;border-color:#e2e8f0;transform:translateY(-1px)}
+/* collapsed: compact icon-only actions */
+.sidebar.collapsed .sidebar-actions{padding:6px 4px;display:flex;flex-direction:column;align-items:center}
+.sidebar.collapsed .sidebar-actions .action{width:auto;padding:8px;margin:4px 0;border-radius:10px;display:inline-flex;justify-content:center;align-items:center;min-width:44px;box-sizing:border-box}
+.sidebar.collapsed .sidebar-actions .action .icon{margin-right:0}
+/* search box */
+.search-box{width:100%;padding:8px 12px;box-sizing:border-box}
+.search-box input{width:100%;padding:8px 10px;border-radius:8px;border:1px solid #e6e9ef;font-size:13px;box-sizing:border-box}
+
+/* more menu */
+.more-menu{display:flex;flex-direction:column;gap:6px;padding:6px 12px}
+.more-menu .menu-item{padding:8px 10px;border-radius:8px;border:1px solid #eef2f7;background:transparent;text-align:left}
+.popover-overlay{position:fixed;inset:0;z-index:60}
+.popover-backdrop{position:absolute;inset:0;background:transparent}
+.popover-content{position:fixed;background:var(--panel);border:1px solid rgba(15,23,42,0.06);border-radius:12px;box-shadow:0 12px 40px rgba(15,23,42,0.12);padding:12px;will-change:transform,opacity;transition:transform .12s ease,opacity .12s ease;box-sizing:border-box}
+.popover-content.more{left:calc(var(--sidebar-current-width) + 12px);top:84px;width:320px;max-width:calc(100% - var(--sidebar-current-width) - 24px)}
+.popover-content.search{left:calc(var(--sidebar-current-width) + 24px);top:120px;width:520px;max-width:calc(100% - var(--sidebar-current-width) - 48px)}
+.popover-content input{width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid #e6e9ef}
+.popover-content .divider{height:1px;background:#eef2f7;margin:10px 0;border-radius:1px}
+.popover-content .history-group{margin-top:8px}
+.popover-content .group-title{font-size:12px;color:var(--muted-text);margin-bottom:6px}
+.popover-content .history-item{padding:8px;border-radius:8px;cursor:pointer}
+.popover-content .history-item:hover{background:#f3f4f6}
+
+/* More dialog: vertical full-width menu buttons */
+.popover-content.more .more-dialog{display:flex;flex-direction:column;gap:8px;padding:12px}
+.popover-content.more .menu-item{display:block;width:100%;padding:10px 12px;border-radius:8px;background:transparent;border:1px solid #eef2f7;text-align:left;cursor:pointer;font-size:13px}
+.popover-content.more .menu-item:hover{background:#f3f4f6;border-color:#e2e8f0;transform:translateY(-1px)}
+
+/* Empty state for chat window */
+.chat-content .empty-state{min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--muted-text);font-size:15px;padding:40px 12px;text-align:center;transform:translateY(var(--empty-state-offset));transition:transform .12s ease;will-change:transform}
+.sessions{padding:8px;overflow:auto;flex:1}
+.recent-label{padding:8px 12px;color:var(--muted-text);font-size:12px}
+.recent-list{display:flex;flex-direction:column;gap:6px;padding:6px 6px 24px 6px}
+.recent-item{padding:8px 10px;border-radius:8px;color:var(--text);display:flex;align-items:center;gap:8px;cursor:pointer}
+.recent-item .summary{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px;margin-top:var(--recent-text-offset)}
+.recent-item:hover{background:#f1f5f9;border:1px solid #dbe6f7}
+.recent-item:active{transform:translateY(0)}
+
+/* Selected recent item (active conversation) */
+.recent-item.selected{background:linear-gradient(180deg,#f6fbff,#ffffff);border:1px solid rgba(37,99,235,0.12);padding-left:12px}
+.recent-item.selected .summary{font-weight:600}
+
+/* subtle hover for entire session row */
+.recent-item{transition:background .12s ease,border-color .12s ease,transform .06s}
+.sidebar-bottom{margin-top:auto;padding:12px;border-top:1px solid #eef2f7}
+.sidebar-bottom .profile{display:flex;align-items:center;gap:12px}
+.sidebar-bottom .avatar{width:var(--sidebar-avatar-size);height:var(--sidebar-avatar-size);border-radius:9999px;background:linear-gradient(180deg,var(--accent),#1e4fd6);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px}
+.sidebar-bottom .profile-meta{display:flex;flex-direction:column;justify-content:center;min-height:48px}
+.sidebar.collapsed .sidebar-bottom .profile-meta{display:none}
+.sidebar.collapsed .sidebar-bottom .avatar{ /* keep avatar size consistent when collapsed */ width:var(--sidebar-avatar-size);height:var(--sidebar-avatar-size);font-size:16px}
+.sidebar-bottom .username{font-size:14px;color:var(--text);line-height:1}
+.sidebar-bottom .tag{font-size:12px;color:var(--muted-text);line-height:1;margin-top:4px}
+
+/* Utilities */
+.hidden{display:none}
+

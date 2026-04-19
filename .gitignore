@@ -6,3 +6,7 @@ __pycache__/
 .env
 bin/logs/*
 !bin/logs/.gitkeep
+
+# 前端
+node_modules/
+dist/

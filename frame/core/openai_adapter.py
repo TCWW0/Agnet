@@ -18,6 +18,7 @@ from frame.core.llm_types import (
     ToolExecutionRecord,
     ToolCallMode,
 )
+from frame.core.logger import Logger
 from frame.core.message import Message
 from frame.core.openai_stream_state_machine import OpenAIStreamStateMachine
 
@@ -25,9 +26,13 @@ from frame.core.openai_stream_state_machine import OpenAIStreamStateMachine
 class OpenAIResponsesAdapter:
     """Adapter that isolates OpenAI Responses API payload/parse details."""
 
-    def __init__(self, client: OpenAI, model_id: str):
+    def __init__(self, client: OpenAI, model_id: str, logger: Optional[Logger] = None):
         self.client_ = client
         self.model_id_ = model_id
+        # logger is optional; adapter-level logs will use provided logger when available
+        from frame.core.logger import global_logger
+
+        self.logger_ = logger or global_logger
 
     def build_message_input_items(self, messages: List[Message]) -> List[OpenAIInputItem]:
         items: List[OpenAIInputItem] = []

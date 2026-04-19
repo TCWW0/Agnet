@@ -76,6 +76,8 @@ class Logger:
         self.min_level_ = min_level
         self.workflow_id = workflow_id or "-"
 
+        # workflow id (optional) used to tag log entries for a logical workflow
+
         # 缓冲区阈值（按字节计），默认 1KB
         self._buffer_size = max(1, int(buffer_size))
         self._flush_interval = float(flush_interval)

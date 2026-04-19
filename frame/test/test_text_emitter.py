@@ -28,7 +28,7 @@ def test_text_emitter_chunk_dispatch() -> None:
 
 
 class _FakeOrchestrator:
-    def invoke_streaming(self, request, on_text_delta=None):
+    def invoke_streaming(self, request, on_text_delta=None, on_tool_call=None):
         if on_text_delta:
             on_text_delta("ab")
             on_text_delta("cd")

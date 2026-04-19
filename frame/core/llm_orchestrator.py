@@ -11,6 +11,7 @@ from frame.core.llm_types import (
     ParsedResponse,
     RetryPolicy,
     TextDeltaCallback,
+    ToolCallCallback,
     ToolExecutionRecord,
     ToolCallMode,
 )
@@ -37,16 +38,20 @@ class LLMInvocationOrchestrator:
         self,
         request: InvocationRequest,
         on_text_delta: Optional[TextDeltaCallback] = None,
+        on_tool_call: Optional[ToolCallCallback] = None,
     ) -> InvocationResult:
         if not request.stream:
             request = request.model_copy(update={"stream": True})
-        return self._invoke_impl(request=request, on_text_delta=on_text_delta, use_stream=True)
+        return self._invoke_impl(
+            request=request, on_text_delta=on_text_delta, use_stream=True, on_tool_call=on_tool_call
+        )
 
     def _invoke_impl(
         self,
         request: InvocationRequest,
         on_text_delta: Optional[TextDeltaCallback],
         use_stream: bool,
+        on_tool_call: Optional[ToolCallCallback] = None,
     ) -> InvocationResult:
 
         result = InvocationResult()
@@ -59,6 +64,7 @@ class LLMInvocationOrchestrator:
             previous_response_id=None,
             on_text_delta=on_text_delta,
             use_stream=use_stream,
+            on_tool_call=on_tool_call,
         )
         self._merge_parsed_output(result, parsed)
 
@@ -98,6 +104,7 @@ class LLMInvocationOrchestrator:
         previous_response_id: Optional[str],
         on_text_delta: Optional[TextDeltaCallback],
         use_stream: bool,
+        on_tool_call: Optional[ToolCallCallback] = None,
     ) -> ParsedResponse:
         if use_stream:
             return self._invoke_stream_with_retry(
@@ -105,6 +112,7 @@ class LLMInvocationOrchestrator:
                 input_items=input_items,
                 previous_response_id=previous_response_id,
                 on_text_delta=on_text_delta,
+                on_tool_call=on_tool_call,
             )
 
         response = self._invoke_with_retry(
@@ -146,6 +154,7 @@ class LLMInvocationOrchestrator:
         input_items,
         previous_response_id: Optional[str],
         on_text_delta: Optional[TextDeltaCallback],
+        on_tool_call: Optional[ToolCallCallback] = None,
     ) -> ParsedResponse:
         retry: RetryPolicy = request.policy.retry_policy
         last_error: Optional[Exception] = None
@@ -157,7 +166,9 @@ class LLMInvocationOrchestrator:
                     input_items=input_items,
                     previous_response_id=previous_response_id,
                 )
-                return self.adapter_.consume_stream(stream, on_text_delta=on_text_delta)
+                return self.adapter_.consume_stream(
+                    stream, on_text_delta=on_text_delta, on_tool_call=on_tool_call
+                )
             except Exception as err:  # pragma: no cover - network exception path
                 last_error = err
                 self.logger_.warning("LLM stream invoke failed, attempt=%s err=%s", attempt, str(err))

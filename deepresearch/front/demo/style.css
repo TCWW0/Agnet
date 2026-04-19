@@ -1,0 +1,14 @@
+:root{--bg:#ffffff;--muted:#f3f4f6;--accent:#2563eb;--text:#111827}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:var(--text);height:100vh}
+.app{display:flex;height:100vh}
+.sidebar{width:260px;border-right:1px solid #e5e7eb;padding:16px}
+.sidebar h2{margin:0 0 12px 0}
+.main{flex:1;display:flex;flex-direction:column}
+.chat{flex:1;padding:24px;overflow:auto}
+.composer{border-top:1px solid #e5e7eb;padding:12px;background:#fbfbfd;display:flex;gap:8px}
+textarea{flex:1;padding:8px;border-radius:6px;border:1px solid #e5e7eb;resize:none}
+button{background:var(--accent);color:white;border:0;padding:8px 12px;border-radius:6px}
+.msg{max-width:70%;padding:10px;border-radius:12px;margin:8px 0}
+.msg.user{margin-left:auto;background:var(--accent);color:white}
+.msg.assistant{margin-right:auto;background:var(--muted);color:var(--text)}
