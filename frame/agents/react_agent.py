@@ -3,7 +3,7 @@ from frame.core.base_agent import BaseAgent
 from frame.core.base_llm import BaseLLM
 from frame.core.config import AgentConfig, LLMConfig
 from frame.core.logger import Logger, global_logger
-from frame.core.message import LLMResponseTextMsg, UserTextMessage
+from frame.memory.base import AgentMemoryHooks, MemoryToolFacade, build_memory_tools
 from frame.tool.register import ToolRegistry, global_tool_registry
 from frame.tool.builtin.calculater import CalculaterTool
 
@@ -16,13 +16,30 @@ class ReactAgent(BaseAgent):
         llm: BaseLLM,
         tool_registry: Optional[ToolRegistry] = None,
         logger: Optional[Logger] = None,
+        session_id: Optional[str] = None,
+        memory_hooks: Optional[AgentMemoryHooks] = None,
+        memory_tool_facade: Optional[MemoryToolFacade] = None,
+        enable_memory_tools: bool = False,
+        agent_id: Optional[str] = None,
     ) -> None:
-        super().__init__(config, llm, logger=logger or global_logger)
+        super().__init__(
+            config,
+            llm,
+            logger=logger or global_logger,
+            session_id=session_id,
+            memory_hooks=memory_hooks,
+            agent_id=agent_id,
+        )
         self.tool_registry_ = tool_registry or global_tool_registry
         self.tool_registry_.register_tool(CalculaterTool())
 
+        if enable_memory_tools and memory_tool_facade is not None:
+            for memory_tool in build_memory_tools(memory_tool_facade, self.session_ref_):
+                self.tool_registry_.register_tool(memory_tool)
+
     def _think_impl(self, user_input: str):
-        self.history_.append(UserTextMessage(content=user_input))
+        invoke_messages = self._prepare_invoke_messages(user_input)
+
         # 使用流式接口展示模型令牌，同时让 orchestrator 负责工具调用（AUTO 模式）和多轮循环
         def _token_printer(token: str) -> None:
             # 简单地按字符打印到 stdout，保持流式显示
@@ -30,7 +47,10 @@ class ReactAgent(BaseAgent):
 
         tools = self.tool_registry_.get_tools()
         messages = self.llm_.invoke_streaming(
-            self.history_, tools, self.sys_prompt_, on_token_callback=_token_printer
+            invoke_messages,
+            tools,
+            self.sys_prompt_,
+            on_token_callback=_token_printer,
         )
 
         # 换行以结束流式输出
@@ -40,34 +60,21 @@ class ReactAgent(BaseAgent):
             print("Agent: (No response)")
             return
 
-        # 将返回的消息逐条处理并加入历史。Orchestrator 在 AUTO 模式下会自动执行工具并把结果作为 ToolResponseMessage 返回。
-        final_text: Optional[LLMResponseTextMsg] = None
+        # 将返回的消息逐条处理并展示。Orchestrator 在 AUTO 模式下会自动执行工具并返回 ToolResponseMessage。
         for msg in messages:
-            # 文本消息
-            if getattr(msg, "type", "") == "text":
-                #print(f"Assistant: {msg.content}")
-                self.history_.append(msg)
-                # 记录最后一条文本作为最终回答
-                final_text = msg  # type: ignore[assignment]
-                continue
-
             # 函数/工具调用（通常已由 Orchestrator 执行或在消息流中展示）
             if getattr(msg, "type", "") == "function":
                 tool_name = getattr(msg, "tool_name", "")
                 args = getattr(msg, "arguments", {})
                 print(f"Assistant requested tool '{tool_name}' with args={args}")
-                self.history_.append(msg)
                 continue
 
             # 工具执行结果
             if getattr(msg, "type", "") == "tool_response":
                 tool_name = getattr(msg, "tool_name", "")
                 print(f"Tool '{tool_name}' -> {msg.content}")
-                self.history_.append(msg)
-                continue
 
-            # 其他类型直接加入历史以保持对话上下文
-            self.history_.append(msg)
+        self._commit_turn(user_input=user_input, llm_messages=messages)
 
 
 if __name__ == "__main__":

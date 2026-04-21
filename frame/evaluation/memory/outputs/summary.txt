@@ -1,0 +1,74 @@
+=== FIELD TO PIPELINE MAPPING ===
+字段到流水线使用的详细映射（详尽）
+
+总体：下面说明 EvalCase 的每个字段在评测流水线中的角色 —— 是否会被注入到 memory、是否会作为检索 query、是否仅用于打分或聚合，以及在 runner/执行器中的具体调用点。
+
+case_id: 用作本条用例的唯一标识，用于报告/聚合/追踪。不会作为检索输入。
+suite: 用于分组与聚合（如 capability / regression），不参与检索逻辑。
+session_id: 作为 memory kernel 的存储桶键。在 runner 的 seed 阶段，expected_memory_snippets 与 noise_snippets 会以 kernel.remember_fact(SessionRef(session_id), text) 注入到该 session 的 memory 中。AgentMemoryHooks 与 MemoryToolFacade 在检索时会以此 session_id 进行 load/query/recall。
+agent_route: 用于选择不同 agent 实现或执行逻辑（执行器可根据该值变更调用路径）；不直接参与检索。
+user_input: 主查询文本。若使用 hooks 路径，AgentMemoryHooks.before_invoke 内会调用 kernel.query(session, user_input, top_k)；若使用工具路径，MemoryToolFacade.recall(session, query=user_input, top_k) 通常以此为默认查询。user_input 同时作为传递给模型的 prompt 输入，执行器也可能基于它构造更精细的检索 query（如抽取实体或 key）。
+expected_answer: 仅用于 grader 判定（对照模型输出以判断正确性）。不会在 seed 阶段自动注入到 memory（除非测试用例作者另行添加）。
+expected_memory_snippets: 在 seed 阶段会注入到 memory（调用 kernel.remember_fact），作为检索的“金标准”。只有当 kernel.query 返回这些片段（或包含这些片段）时，模型才会接收到它们；同时用于计算 recall@k / precision@k 指标。
+noise_snippets: 同样在 seed 阶段注入，用来模拟记忆污染或冲突事实。若检索返回噪声片段，会影响 recalled_contents 与 conflict_sensitivity 指标（但默认实现将其作为可分析的软信号，而非直接否决）。
+should_recall: 设计/分析提示，表明该用例期望通过 memory 检索获得答案。执行器/runner 不强制执行，仅用于结果解释（若 should_recall=true 但 A-arm 也通过，说明该用例并非严格依赖 memory）。
+tags: 元标注字段，用于报告过滤与 drill-down 分析，不参与检索。
+answer_match_mode: 控制 grader 如何匹配答案（exact / contains / regex），影响成功判定。
+
+流水线要点：
+- Seed：runner 会先对所有用例执行注入（seed_kernel_from_cases），把 expected_memory_snippets 与 noise_snippets 注入到各自的 session 中。
+- Hooks 路径：AgentMemoryHooks.before_invoke 会先 load_recent(session, max_history_items)，若 policy.enable_retrieval 为 True，再执行 kernel.query(session, user_input, top_k)，将检索到的 Message 合并到 prompt，并进行去重后传给模型。
+- Tools 路径：MemoryToolFacade.recall(session, query, top_k) 会调用 kernel.query 并以字符串列表返回；该调用计为一次工具调用（TrialObservation.n_toolcalls）。
+- Executor：执行器需在 TrialObservation.recalled_contents 中记录实际提供给模型的记忆文本（以便 grader 计算 recall/precision 并做冲突分析）。
+- Grader：grade_trial(case, observation) 使用模型输出（observation.answer_text）与 recalled_contents 对照 expected_answer 与 expected_memory_snippets 来计算 grader_score_det、recall@k、precision@k、memory_usage_score、conflict_sensitivity 等，并根据 outcome-first 策略决定 success。
+
+输出写入位置（runner 行为）:
+- summary.txt 会在顶部附加此文本块，便于人工快速理解各列含义与字段使用方式。
+- report.json 会包含 _explanations_text（完整文本）与 _explanations（字段->简短描述的字典），便于自动化解析或展示。
+
+=== SHORT FIELD DESCRIPTIONS ===
+case_id: 唯一用例 ID（仅用于报告/聚合/追踪）
+suite: 用例套（capability/regression），用于分组和汇总统计
+session_id: memory 存储桶键；seed 阶段用于注入 expected/noise snippets；检索时作为 kernel.query 的 session
+agent_route: 选择不同 agent/执行路径的标识（不直接参与检索）
+user_input: 主查询文本；作为 kernel.query / MemoryToolFacade.recall 的默认 query，同时为模型输入
+expected_answer: grader 的参考答案，仅用于评分，不直接注入 memory
+expected_memory_snippets: 在 seed 阶段注入到 kernel（gold memory）；用于 recall/precision 计算，只有被检索到时才提供给模型
+noise_snippets: 在 seed 阶段注入以模拟冲突；若检索返回则影响 conflict_sensitivity
+should_recall: 设计提示字段，表明期望记忆被使用（仅用于分析/解释）
+tags: 用于分类/过滤/分组分析
+answer_match_mode: 控制 grader 答案匹配模式（exact/contains/regex）
+TrialResult.recalled_contents: 执行器实际提供给模型的记忆片段（用于 recall/precision 与冲突分析）
+
+=== METRICS EXPLANATION ===
+指标字段说明（用于 summary 中的两部分）
+
+Arm Suite Summaries 字段说明：
+- success_rate: 在该 suite+arm 下所有 trial 的成功率均值（0.0–1.0）。表示总体正确率或通过率。
+- pass@1: 对每个 case 计算的 pass@1（在 1 次尝试内至少成功一次的概率），然后对所有 case 求平均。
+- pass@k: 对每个 case 计算的 pass@k（k 为配置中的 pass_k），表示在 k 次尝试内至少成功一次的概率，结果为 case 级别的平均值。
+- mean_tokens: trial 级别的平均 `total_tokens`（用于估计 token 成本；示例中为模拟值，真实接入 LLM 时为实际 token）。
+- mean_latency_ms: trial 级别的平均 `latency_ms`（毫秒），表示响应延迟的平均值。
+
+Suite Deltas (B vs A) 字段说明：
+- delta_success_b_vs_a: arm B 的 success_rate 减去 arm A 的 success_rate（B - A）。正值表示 B（启用 memory/检索）相对 A（无 memory）有提升。
+- delta_success_c_vs_b: arm C 的 success_rate 减去 arm B 的 success_rate（C - B）。
+- latency_ratio_b_vs_a: mean_latency_ms(B) 除以 mean_latency_ms(A)。若分母为 0，使用安全除法返回 0。值>1 表示 B 的平均延迟更高。
+- token_ratio_b_vs_a: mean_total_tokens(B) 除以 mean_total_tokens(A)。值>1 表示 B 消耗更多 token。
+
+注意：summary 中展示的 mean 字段在文本中可能做了四舍五入显示（例如显示为 0.0），而 ratio/ delta 使用精确数值计算并显示更多精度，因此可能出现表面为 0.0 但 ratio 大于 1 的情况。
+
+Eval ID: inmemory-kernel-eval-a8dcf151
+Run at: 2026-04-20 09:27:29.931722+00:00
+
+--- Arm Suite Summaries ---
+suite=capability arm=A cases=27 trials=81 success_rate=0.037 pass@1=0.037 pass@k=0.037 mean_tokens=3.0 mean_latency_ms=0.0
+suite=capability arm=B cases=27 trials=81 success_rate=0.630 pass@1=0.630 pass@k=0.630 mean_tokens=4.7 mean_latency_ms=0.0
+suite=capability arm=C cases=27 trials=81 success_rate=0.630 pass@1=0.630 pass@k=0.630 mean_tokens=4.7 mean_latency_ms=0.0
+suite=regression arm=A cases=3 trials=9 success_rate=1.000 pass@1=1.000 pass@k=1.000 mean_tokens=1.0 mean_latency_ms=0.0
+suite=regression arm=B cases=3 trials=9 success_rate=1.000 pass@1=1.000 pass@k=1.000 mean_tokens=1.0 mean_latency_ms=0.0
+suite=regression arm=C cases=3 trials=9 success_rate=1.000 pass@1=1.000 pass@k=1.000 mean_tokens=1.0 mean_latency_ms=0.0
+
+--- Suite Deltas (B vs A) ---
+suite=capability delta_success_b_vs_a=0.593 delta_success_c_vs_b=0.000 latency_ratio_b_vs_a=2.909 token_ratio_b_vs_a=1.556
+suite=regression delta_success_b_vs_a=0.000 delta_success_c_vs_b=0.000 latency_ratio_b_vs_a=1.496 token_ratio_b_vs_a=1.000

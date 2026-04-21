@@ -1,0 +1,5 @@
+unstructured[pdf]
+pydantic
+pytest
+# Optional: better token estimation
+tiktoken

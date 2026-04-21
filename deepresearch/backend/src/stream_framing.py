@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Iterator, Literal, TypedDict
+from typing import Any, Iterator, Literal, TypedDict, cast
 
 
 StreamEventType = Literal["chunk", "paragraph", "meta", "done", "error", "heartbeat"]
@@ -125,7 +125,8 @@ class StreamFramer:
 
         if text is not None:
             frame["text"] = text
-            frame["format"] = self._output_format 
+            # cast to the Literal union so type-checkers accept assignment
+            frame["format"] = cast(Literal["markdown", "text"], self._output_format)
         if paragraph_id is not None:
             frame["paragraphId"] = paragraph_id
         if meta is not None:

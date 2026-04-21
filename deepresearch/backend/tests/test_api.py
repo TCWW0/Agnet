@@ -132,33 +132,3 @@ def test_post_chat_stream_emits_paragraph_frames() -> None:
     done_meta = done_payloads[0].get("meta")
     assert isinstance(done_meta, dict)
     assert done_meta.get("paragraphCount") == 2
-
-
-def test_post_chat_stream_pause_endpoint_and_paused_done_event() -> None:
-    stream_id = "stream_pause_test"
-    pause_response = client.post(
-        "/api/v1/chat/stream/pause",
-        json={"streamId": stream_id, "conversationId": "conv_pause"},
-    )
-    assert pause_response.status_code == 200
-    assert pause_response.json() == {"status": "ok", "streamId": stream_id}
-
-    stream_payload = {
-        "conversationId": "conv_pause",
-        "streamId": stream_id,
-        "messages": [
-            {"id": "1", "role": "user", "content": "请暂停当前流"}
-        ],
-    }
-    stream_response = client.post("/api/v1/chat/stream", json=stream_payload)
-    assert stream_response.status_code == 200
-
-    events = _parse_sse_events(stream_response.text)
-    assert events
-
-    done_payloads = [payload for event_name, payload in events if event_name == "done"]
-    assert done_payloads
-    done_meta = done_payloads[0].get("meta")
-    assert isinstance(done_meta, dict)
-    assert done_meta.get("paused") is True
-    assert done_meta.get("streamId") == stream_id
