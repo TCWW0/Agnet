@@ -1,6 +1,6 @@
 import React from 'react'
-import Sidebar from './components/Sidebar'
-import ChatPage from './pages/ChatPage'
+import Sidebar from './components/Sidebar.js'
+import ChatPage from './pages/ChatPage.js'
 
 export default function App(){
   return (

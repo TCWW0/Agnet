@@ -21,10 +21,16 @@ uvicorn src.main:app --app-dir deepresearch/backend --reload --port 8000
 
 ## Environment Variables
 
-- `DEEPRESEARCH_CHAT_MODE`: `mock` (default) or `frame`
+- `DEEPRESEARCH_CHAT_MODE`: `mock` (default), `frame`, `openai`, or `skill_rag`
 - `DEEPRESEARCH_CORS_ORIGINS`: 逗号分隔的前端源，默认包含 `http://localhost:5173`
+- `DEEPRESEARCH_KB_ROOT`: Knowledge Base 根目录（默认 `Knowledge-Base`）
+- `DEEPRESEARCH_KB_CHUNKS_ROOT`: Chunk 根目录（默认 `Knowledge-Base-Chunks`）
+- `DEEPRESEARCH_KB_SUMMARY_ROOT`: Summary 根目录（默认 `Knowledge-Base-File-Summary`）
+- `DEEPRESEARCH_SKILL_TOP_K`: Skill-RAG 每轮证据上限（默认 4）
+- `DEEPRESEARCH_SKILL_MAX_CALLS`: Skill-RAG 每轮最大技能调用数（默认 3）
 
 当 `DEEPRESEARCH_CHAT_MODE=frame` 时，会调用 `frame.core.BaseLLM`。
+当 `DEEPRESEARCH_CHAT_MODE=skill_rag` 时，会启用确定性路由的 Hybrid Skill-RAG 引擎。
 
 ## Test
 

@@ -95,6 +95,16 @@ def test_post_chat_stream_sends_done_event() -> None:
         assert payload["type"] == event_name
 
 
+def test_post_chat_stream_pause_returns_ok() -> None:
+    payload = {"streamId": "stream_test_001", "conversationId": "conv_test_001"}
+    response = client.post("/api/v1/chat/stream/pause", json=payload)
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["streamId"] == "stream_test_001"
+
+
 class _MarkerEngine:
     def generate(self, messages: Sequence[ChatMessage]) -> str:
         return "第一段<|PARA|>第二段"

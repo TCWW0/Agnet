@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from src.config import AppConfig
-from src.schemas import ChatRequest, ChatResponse, HealthResponse
+from src.schemas import ChatRequest, ChatResponse, HealthResponse, PauseStreamRequest, PauseStreamResponse
 from src.service import ChatService
 
 
@@ -56,6 +56,12 @@ def post_chat_stream(request: ChatRequest) -> StreamingResponse:
             yield _to_sse(payload, event=event)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/api/v1/chat/stream/pause", response_model=PauseStreamResponse)
+def post_chat_stream_pause(request: PauseStreamRequest) -> PauseStreamResponse:
+    service.pause_stream(request.streamId)
+    return PauseStreamResponse(status="ok", streamId=request.streamId)
 
 
 @app.get("/api/v1/chat/stream")

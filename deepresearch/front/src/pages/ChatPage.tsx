@@ -107,7 +107,11 @@ export default function ChatPage(){
     const streamId = 'stream_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
     setIsStreaming(true)
 
-    const msgsForApi = [userMsg]
+    const msgsForApi = useChatStore
+      .getState()
+      .messages
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && (m.content || '').trim().length > 0)
+      .map(m => ({ id: m.id, role: m.role, content: m.content }))
 
     // start streaming via POST + ReadableStream
     const ctrl = streamChat(

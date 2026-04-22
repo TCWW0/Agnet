@@ -79,6 +79,9 @@ class StreamFramer:
     def error(self, message: str) -> StreamFrame:
         return self._build_frame("error", meta={"error": message})
 
+    def meta(self, payload: dict[str, Any]) -> StreamFrame:
+        return self._build_frame("meta", meta=payload)
+
     def finalize(self) -> Iterator[StreamFrame]:
         """Flush remaining text and emit final paragraph/done frames."""
         if self._scan_buffer:
