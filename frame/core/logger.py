@@ -17,7 +17,7 @@ import inspect
 import atexit
 from enum import Enum
 from typing import List, Optional
-
+from datetime import datetime, timezone, timedelta
 
 class Level(Enum):
     DEBUG = "DEBUG"
@@ -306,18 +306,14 @@ class Logger:
         entry = self._format_entry(level, msg)
         self._enqueue(entry)
 
+
     def _format_entry(self, level: Level, msg: str) -> str:
-        # 确保单行日志：把消息中的真实换行替换为转义序列 "\\n"，
-        # 以便每条日志条目写入文件时始终为单行，便于后续行级解析。
         if isinstance(msg, str):
-            # 先把 Windows 风格 CRLF 统一替换，再处理单独的 CR/LF
             msg = msg.replace("\r\n", "\\n").replace("\r", "\\n").replace("\n", "\\n")
 
-        # UTC 时间，包含毫秒
-        ts = time.gmtime()
-        timestr = time.strftime("%Y-%m-%dT%H:%M:%S", ts)
-        ms = int((time.time() - int(time.time())) * 1000)
-        timestamp = f"{timestr}.{ms:03d}Z"
+        cn_tz = timezone(timedelta(hours=8))
+        now = datetime.now(cn_tz)
+        timestamp = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "+08:00"
 
         caller = self._get_caller_info()
         wf = self.workflow_id or "-"

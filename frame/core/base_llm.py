@@ -100,9 +100,6 @@ class BaseLLM:
             instructions=sys_instructions,
         )
 
-        req_id = str(uuid.uuid4())
-        prev_wf = self.logger_.workflow_id
-        self.logger_.set_workflow_id(req_id)
         emitter = TextEmitter(
             callback=on_token_callback,
             dispatch_mode=DispatchMode.PER_CHAR,
@@ -116,13 +113,6 @@ class BaseLLM:
             )
         finally:
             emitter.close()
-            self.logger_.set_workflow_id(prev_wf)
-
-        self.logger_.info(
-            "LLM stream response messages=%s, tool_rounds=%s",
-            len(result.emitted_messages),
-            result.total_tool_rounds,
-        )
 
         return result.emitted_messages
 

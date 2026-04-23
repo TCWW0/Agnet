@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from threading import RLock
-from typing import Dict, List, Literal, Optional, Protocol, Sequence
+from typing import Dict, List, Literal, Optional, Protocol, Sequence, cast
 
 from pydantic import BaseModel, Field
 
 from frame.core.message import Message
-from frame.tool.base import BaseTool, Property, ToolDesc, ToolParameters, ToolResponse
+from frame.tool.base import BaseTool, Property, ToolDesc, ToolParameters, ToolResponse, ValidationResult
 
 MemoryScope = Literal["all", "recent", "facts"]
 
@@ -205,8 +205,19 @@ class MemoryRecallTool(BaseTool):
 		)
 		return ToolDesc(name="memory_recall", description="Recall related memories", parameters=params)
 
-	def valid_paras(self, params: Dict[str, str]) -> bool:
-		return isinstance(params.get("query"), str) and bool(params.get("query", "").strip())
+	def valid_paras(self, params: Dict[str, str]) -> "ValidationResult":
+		query = params.get("query")
+		if not isinstance(query, str) or not query.strip():
+			return ValidationResult(valid=False, message="missing or empty 'query' parameter")
+		# top_k 尝试解析为整数，若失败使用默认 3
+		top_k_raw = params.get("top_k", 3)
+		try:
+			top_k = int(str(top_k_raw))
+			if top_k < 1:
+				top_k = 3
+		except Exception:
+			top_k = 3
+		return ValidationResult(valid=True, parsed_params={"query": query, "top_k": top_k})
 
 	def _execute_impl(self, params: Dict[str, str]) -> ToolResponse:
 		query = params.get("query", "")
@@ -240,8 +251,11 @@ class MemoryRememberTool(BaseTool):
 		)
 		return ToolDesc(name="memory_remember", description="Store one memory", parameters=params)
 
-	def valid_paras(self, params: Dict[str, str]) -> bool:
-		return isinstance(params.get("text"), str) and bool(params.get("text", "").strip())
+	def valid_paras(self, params: Dict[str, str]) -> "ValidationResult":
+		text = params.get("text")
+		if not isinstance(text, str) or not text.strip():
+			return ValidationResult(valid=False, message="missing or empty 'text' parameter")
+		return ValidationResult(valid=True, parsed_params={"text": text.strip()})
 
 	def _execute_impl(self, params: Dict[str, str]) -> ToolResponse:
 		text = params.get("text", "")
@@ -265,12 +279,16 @@ class MemoryForgetTool(BaseTool):
 		)
 		return ToolDesc(name="memory_forget", description="Clear memory by scope", parameters=params)
 
-	def valid_paras(self, params: Dict[str, str]) -> bool:
-		return params.get("scope") in {"all", "recent", "facts"}
+	def valid_paras(self, params: Dict[str, str]) -> "ValidationResult":
+		scope = params.get("scope")
+		if scope not in {"all", "recent", "facts"}:
+			return ValidationResult(valid=False, message=f"invalid scope '{scope}', expected one of all|recent|facts")
+		return ValidationResult(valid=True, parsed_params={"scope": scope})
 
 	def _execute_impl(self, params: Dict[str, str]) -> ToolResponse:
-		scope = params.get("scope", "all")
-		output = self.facade_.forget(self.session_, scope=scope)  # type: ignore[arg-type]
+		scope_raw = params.get("scope", "all")
+		scope = cast(MemoryScope, scope_raw)
+		output = self.facade_.forget(self.session_, scope=scope)
 		return ToolResponse(tool_name=self.name, status="success", output=output)
 
 

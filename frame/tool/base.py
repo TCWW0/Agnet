@@ -4,7 +4,7 @@
 from abc import ABC, abstractmethod
 import json
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Literal,Any
+from typing import Optional, List, Dict, Literal, Any
 
 """ 
 实例期望的工具定义格式如下：
@@ -102,6 +102,8 @@ class ToolResponse(BaseModel):
     tool_name: str
     status: Literal["success", "error"]
     output: str
+    # 可选的结构化细节字段，供工具返回额外的语义化信息（例如验证错误详情、元数据等）
+    details: Optional[Dict[str, Any]] = None
 
     # 描述工具的输入输出规范，供LLM理解
     @classmethod
@@ -110,14 +112,25 @@ class ToolResponse(BaseModel):
             "ToolResponse是工具调用的结果结构，包含以下字段：\n"
             "- tool_name: str，表示工具的名称\n"
             "- status: 'success'或'error'，表示工具调用的状态\n"
-            "- output: str，表示工具调用的输出结果，如果status为'success'则是工具的语义化结果，如果status为'error'则是错误信息\n"
+            "- output: str，表示工具调用的文本化输出或摘要（最好是可供LLM直接消费的自然语言）\n"
+            "- details: 可选的结构化详情字段（JSON object），当需要对错误或结果进行语义化说明时使用\n"
             "示例结构：\n"
             "{\n"
             "  \"tool_name\": \"example_tool\",\n"
             "  \"status\": \"success\",\n"
-            "  \"output\": \"工具执行成功\"\n"
+            "  \"output\": \"工具执行成功\",\n"
+            "  \"details\": {\"duration_ms\": 12}\n"
             "}"
         )
+
+
+class ValidationResult(BaseModel):
+    """验证返回的语义化结果。"""
+    valid: bool
+    # 当 valid == False 时，message 应当包含对失败原因的简洁说明，供 LLM 或调用方使用
+    message: Optional[str] = None
+    # 可选的解析后的参数（例如将字符串转换为数字、规范化路径等），在继续执行时可直接使用
+    parsed_params: Optional[Dict[str, Any]] = None
     
 class LLMToolCallRequest(BaseModel):
     tool_name: str
@@ -138,11 +151,25 @@ class BaseTool(ABC):
         pass
     
     def execute(self, params: Dict[str, Any]) -> ToolResponse:
-        # 这里可以添加一些通用的前置处理逻辑，比如参数的验证等
-        if not self.valid_paras(params):
-            return ToolResponse(tool_name=self.name, status="error", output="Invalid parameters")
+        # 参数验证：子类必须返回 ValidationResult
+        validation = self.valid_paras(params)
+        if not isinstance(validation, ValidationResult):
+            return ToolResponse(tool_name=self.name, status="error", output="invalid validation result type", details={"validation": True})
+
+        vresult: ValidationResult = validation
+        if not vresult.valid:
+            msg = vresult.message or "Invalid parameters"
+            return ToolResponse(tool_name=self.name, status="error", output=msg, details={"validation": True})
+
+        # 若验证返回了 parsed_params，则优先使用它们作为执行参数
+        exec_params: Dict[str, Any] = params
+        if vresult.parsed_params:
+            merged = dict(params)
+            merged.update(vresult.parsed_params)
+            exec_params = merged
+
         try:
-            result = self._execute_impl(params)
+            result = self._execute_impl(exec_params)
             return result
         except Exception as e:
             return ToolResponse(tool_name=self.name, status="error", output=str(e))
@@ -152,7 +179,11 @@ class BaseTool(ABC):
         pass
 
     @abstractmethod
-    def valid_paras(self, params: Dict[str, str]) -> bool:
+    def valid_paras(self, params: Dict[str, Any]) -> ValidationResult:
+        """Validate params and return a ValidationResult.
+
+        子类必须返回 `ValidationResult`，可包含 `parsed_params` 以便执行阶段直接使用解析后的参数。
+        """
         pass
 
 if __name__ == "__main__":

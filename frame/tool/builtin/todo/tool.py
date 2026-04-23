@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Optional
 
-from frame.tool.base import BaseTool, Property, ToolDesc, ToolParameters, ToolResponse
+from frame.tool.base import BaseTool, Property, ToolDesc, ToolParameters, ToolResponse, ValidationResult
 from frame.tool.builtin.todo.manager import TodoManager
 from frame.tool.builtin.todo.models import TodoStatus
 from frame.tool.builtin.todo.storage import JsonTodoStorage, TodoStorage
@@ -43,32 +43,57 @@ class TodoTool(BaseTool):
             parameters=params,
         )
 
-    def valid_paras(self, params: Dict[str, str]) -> bool:
+    def valid_paras(self, params: Dict[str, str]) -> ValidationResult:
         action = params.get("action")
         if action not in {"create", "list", "get", "update", "delete"}:
-            return False
+            return ValidationResult(valid=False, message="invalid action")
 
         if action == "create":
-            text_ok = bool(str(params.get("text", "")).strip())
+            text = str(params.get("text", "")).strip()
             status = params.get("status")
             status_ok = status is None or status in {"not-started", "in-progress", "completed"}
-            return text_ok and status_ok
+            if not text:
+                return ValidationResult(valid=False, message="text is required for create")
+            if not status_ok:
+                return ValidationResult(valid=False, message="invalid status")
+            parsed: Dict[str, Any] = {"text": text}
+            if status is not None:
+                parsed["status"] = status
+            return ValidationResult(valid=True, parsed_params=parsed)
 
         if action == "list":
             status = params.get("status")
-            return status is None or status in {"not-started", "in-progress", "completed"}
+            if status is None or status in {"not-started", "in-progress", "completed"}:
+                parsed: Dict[str, Any] = {"status": status} if status is not None else {}
+                return ValidationResult(valid=True, parsed_params=parsed)
+            return ValidationResult(valid=False, message="invalid status")
 
         if action in {"get", "delete"}:
-            return bool(str(params.get("item_id", "")).strip())
+            item_id = str(params.get("item_id", "")).strip()
+            if not item_id:
+                return ValidationResult(valid=False, message="item_id is required")
+            return ValidationResult(valid=True, parsed_params={"item_id": item_id})
 
         if action == "update":
-            item_id_ok = bool(str(params.get("item_id", "")).strip())
+            item_id = str(params.get("item_id", "")).strip()
+            if not item_id:
+                return ValidationResult(valid=False, message="item_id is required for update")
             has_text = "text" in params
             has_status = "status" in params
-            status_ok = params.get("status") in {"not-started", "in-progress", "completed", None}
-            return item_id_ok and (has_text or has_status) and status_ok
+            status = params.get("status")
+            status_ok = status in {"not-started", "in-progress", "completed", None}
+            if not (has_text or has_status):
+                return ValidationResult(valid=False, message="nothing to update")
+            if not status_ok:
+                return ValidationResult(valid=False, message="invalid status")
+            parsed: Dict[str, Any] = {"item_id": item_id}
+            if has_text:
+                parsed["text"] = params.get("text")
+            if has_status:
+                parsed["status"] = status
+            return ValidationResult(valid=True, parsed_params=parsed)
 
-        return False
+        return ValidationResult(valid=False, message="unsupported action")
 
     def _execute_impl(self, params: Dict[str, Any]) -> ToolResponse:
         action = str(params.get("action", "")).strip()

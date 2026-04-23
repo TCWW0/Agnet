@@ -80,6 +80,7 @@ class ToolResponseMessage(Message):
     tool_name: str
     call_id: str
     status: Literal["success", "error"]
+    details: Dict[str, Any] | None = None
 
     @classmethod
     def from_tool_result(
@@ -88,6 +89,7 @@ class ToolResponseMessage(Message):
         call_id: str,
         status: Literal["success", "error"],
         output: str,
+        details: Dict[str, Any] | None = None,
     ) -> "ToolResponseMessage":
         return cls(
             role="tool",
@@ -96,6 +98,7 @@ class ToolResponseMessage(Message):
             tool_name=tool_name,
             call_id=call_id,
             status=status,
+            details=details,
         )
 
 

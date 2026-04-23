@@ -1,4 +1,4 @@
-from frame.tool.base import BaseTool,ToolDesc,ToolParameters,Property,ToolResponse
+from frame.tool.base import BaseTool, ToolDesc, ToolParameters, Property, ToolResponse, ValidationResult
 
 from typing import Dict
 
@@ -41,15 +41,17 @@ class CalculaterTool(BaseTool):
         )
     
     # 只要重载这个方法，后续执行时就会在实际执行之前先调用valid_paras进行参数验证，确保参数的合法性
-    def valid_paras(self, params: Dict[str, str]) -> bool:
+    def valid_paras(self, params: Dict[str, str]) -> "ValidationResult":
         try:
-            float(params["operand1"])
-            float(params["operand2"])
-            if params["operator"] not in ["+", "-", "*", "/"]:
-                return False
-            return True
-        except:
-            return False
+            op1 = float(params["operand1"])
+            op2 = float(params["operand2"])
+            operator = params["operator"]
+            if operator not in ["+", "-", "*", "/"]:
+                return ValidationResult(valid=False, message=f"unsupported operator: {operator}")
+            # 返回解析后的数字，便于执行阶段直接使用
+            return ValidationResult(valid=True, parsed_params={"operand1": op1, "operand2": op2, "operator": operator})
+        except Exception:
+            return ValidationResult(valid=False, message="operand parse error; expected numeric operand1 and operand2")
 
     # 由OOP保证了执行此方法时传入的参数已经过valid_paras的验证，因此可以直接进行计算逻辑的实现
     def _execute_impl(self, params: Dict[str,str]) -> ToolResponse:

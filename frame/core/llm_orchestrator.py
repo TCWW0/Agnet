@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import json
 from typing import Dict, List, Optional
 
 from openai.types.responses import Response
@@ -19,6 +20,7 @@ from frame.core.logger import Logger, global_logger
 from frame.core.message import LLMResponseFunCallMsg, LLMResponseTextMsg, Message, ToolResponseMessage
 from frame.core.openai_adapter import OpenAIResponsesAdapter
 from frame.tool.base import BaseTool, ToolResponse
+from frame.tool.register import ToolRegistry
 
 # 负责一次调用的状态机编排
 class LLMInvocationOrchestrator:
@@ -55,7 +57,9 @@ class LLMInvocationOrchestrator:
     ) -> InvocationResult:
 
         result = InvocationResult()
-        tool_by_name: Dict[str, BaseTool] = {tool.name: tool for tool in request.tools}
+        tool_registry = ToolRegistry(logger=self.logger_)
+        for tool in request.tools:
+            tool_registry.register_tool(tool)
 
         # 一层封装屏蔽流式与非流式的调用区别
         parsed = self._invoke_once(
@@ -73,10 +77,12 @@ class LLMInvocationOrchestrator:
             result.stopped_reason = "completed"
             return result
 
+        # 打印一次本次回答中出现的工具调用,下面实际上自己本身会执行工具后续追问的循环
         rounds = 0
         while parsed.tool_calls and rounds < request.policy.max_tool_rounds:
+            self.logger_.debug("LLM response requires tool calls, executing round=%s tool_calls=%s", rounds + 1, [call.tool_name for call in parsed.tool_calls])
             rounds += 1
-            records = self._execute_tool_calls(parsed, tool_by_name)
+            records = self._execute_tool_calls(parsed, tool_registry)
             result.tool_execution_records.extend(records)
             self._append_tool_response_messages(result.emitted_messages, records)
 
@@ -206,19 +212,27 @@ class LLMInvocationOrchestrator:
         tools: 本次请求使用的工具字典
         parsed: LLM返回的解析结果，包含了需要调用的工具信息
     """
-    def _execute_tool_calls(self, parsed: ParsedResponse, tools: Dict[str, BaseTool]) -> List[ToolExecutionRecord]:
+    def _execute_tool_calls(self, parsed: ParsedResponse, tools: ToolRegistry) -> List[ToolExecutionRecord]:
         records: List[ToolExecutionRecord] = []
         for call in parsed.tool_calls:
-            tool = tools.get(call.tool_name)
-            if tool is None:
-                tool_result = ToolResponse(
-                    tool_name=call.tool_name,
-                    status="error",
-                    output=f"Tool '{call.tool_name}' not found",
+            tool_name = (call.tool_name or "").strip()
+            if not tool_name:
+                self.logger_.warning(
+                    "Skip empty tool name call_id=%s arguments=%s",
+                    call.call_id,
+                    self._safe_json_dumps(call.arguments),
                 )
-            else:
-                tool_result = tool.execute(call.arguments)
-            records.append(ToolExecutionRecord(call=call, result=tool_result))
+                continue
+            try:
+                tool_result = tools.execute_tool(tool_name, call.arguments)
+            except Exception as exc:
+                tool_result = ToolResponse(
+                    tool_name=tool_name,
+                    status="error",
+                    output=f"Tool '{tool_name}' execution failed: {exc}",
+                )
+            sanitized_call = call.model_copy(update={"tool_name": tool_name})
+            records.append(ToolExecutionRecord(call=sanitized_call, result=tool_result))
         return records
 
     def _append_tool_response_messages(self, output: List[Message], records: List[ToolExecutionRecord]) -> None:
@@ -229,5 +243,30 @@ class LLMInvocationOrchestrator:
                     call_id=record.call.call_id,
                     status=record.result.status,
                     output=record.result.output,
+                    details=record.result.details,
                 )
             )
+
+    def _log_parsed_response(self, parsed: ParsedResponse, round_index: int) -> None:
+        full_text = "".join(chunk.text for chunk in parsed.texts)
+        tool_calls_payload = [
+            {
+                "tool_name": call.tool_name,
+                "call_id": call.call_id,
+                "arguments": call.arguments,
+            }
+            for call in parsed.tool_calls
+        ]
+        self.logger_.info(
+            "LLM parsed response round=%s response_id=%s text=%s tool_calls=%s",
+            round_index,
+            parsed.response_id,
+            full_text,
+            self._safe_json_dumps(tool_calls_payload),
+        )
+
+    def _safe_json_dumps(self, value) -> str:
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except Exception:
+            return str(value)

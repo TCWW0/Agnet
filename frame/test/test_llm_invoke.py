@@ -141,3 +141,46 @@ def test_orchestrator_stream_auto_tool_flow() -> None:
     assert len(result.tool_execution_records) == 1
     assert "".join(deltas) == "1 + 2 的结果为 3"
     assert any(isinstance(msg, LLMResponseTextMsg) for msg in result.emitted_messages)
+
+
+def test_orchestrator_skips_empty_tool_name_calls() -> None:
+    class _AdapterWithEmptyToolCall(_FakeAdapter):
+        def parse_response(self, response):
+            if self.invoke_count == 1:
+                return ParsedResponse(
+                    response_id="resp_1",
+                    tool_calls=[
+                        ParsedToolCall(
+                            tool_name="",
+                            call_id="call_empty",
+                            arguments_json='{"path":"."}',
+                            arguments={"path": "."},
+                        ),
+                        ParsedToolCall(
+                            tool_name="calculater",
+                            call_id="call_1",
+                            arguments_json='{"operand1":"1", "operand2":"2", "operator":"+"}',
+                            arguments={"operand1": "1", "operand2": "2", "operator": "+"},
+                        ),
+                    ],
+                )
+            return ParsedResponse(
+                response_id="resp_2",
+                texts=[ParsedTextChunk(text="ok")],
+            )
+
+    adapter = _AdapterWithEmptyToolCall()
+    orchestrator = LLMInvocationOrchestrator(adapter=adapter)  # type: ignore
+    request = InvocationRequest(
+        messages=[UserTextMessage(content="帮我计算 1+2")],
+        tools=[CalculaterTool()],
+        policy=InvocationPolicy(
+            tool_mode=ToolCallMode.AUTO,
+            max_tool_rounds=2,
+            retry_policy=RetryPolicy(max_attempts=1),
+        ),
+    )
+
+    result = orchestrator.invoke(request)
+    assert len(result.tool_execution_records) == 1
+    assert result.tool_execution_records[0].call.tool_name == "calculater"
