@@ -4,6 +4,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from frame.core.logger import Logger
+from frame.core.message import LLMResponseFunCallMsg
 from frame.tool.base import BaseTool, ToolDesc, ToolResponse
 
 class ToolRegistry:
@@ -26,30 +27,30 @@ class ToolRegistry:
     def set_logger(self, logger: Optional[Logger]) -> None:
         self.logger_ = logger
 
-    def execute_tool(self, name: str, arguments: Dict[str, Any]) -> ToolResponse:
+    def execute_tool(self, call_info: LLMResponseFunCallMsg) -> ToolResponse:
         try:
-            tool = self.get_tool_by_name(name)
+            tool = self.get_tool_by_name(call_info.tool_name)
         except ValueError as exc:
-            response = ToolResponse(tool_name=name, status="error", output=str(exc))
+            response = ToolResponse(tool_name=call_info.tool_name, status="error", output=str(exc))
             self._log(
                 "tool_result",
-                name,
+                call_info.tool_name,
                 {
                     "status": response.status,
-                    "input": arguments,
+                    "input": call_info.arguments,
                     "output": response.output,
                     "details": response.details,
                 },
             )
             return response
 
-        response = tool.execute(arguments)
+        response = tool.execute(call_info.arguments)
         self._log(
             "tool_result",
-            name,
+            call_info.tool_name,
             {
                 "status": response.status,
-                "input": arguments,
+                "input": call_info.arguments,
                 "output": response.output,
                 "details": response.details,
             },

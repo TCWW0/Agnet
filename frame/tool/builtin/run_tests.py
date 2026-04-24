@@ -28,9 +28,31 @@ class RunTestsTool(BaseTool):
             proc = subprocess.run(cmd, capture_output=True, text=True, cwd=self.workspace_root)
             stdout = proc.stdout or ""
             stderr = proc.stderr or ""
-            details = {"exit_code": proc.returncode}
+            combined = (stdout + "\n" + stderr).strip()
+            details: Dict[str, Any] = {"exit_code": proc.returncode}
+            if proc.returncode != 0:
+                lowered = combined.lower()
+                if "file or directory not found" in lowered:
+                    details.update(
+                        {
+                            "error_type": "tests_not_found",
+                            "action_hint": "Create or point to an existing pytest file before retrying run_tests.",
+                        }
+                    )
+                elif "no tests ran" in lowered or "collected 0 items" in lowered:
+                    details.update(
+                        {
+                            "error_type": "no_tests_collected",
+                            "action_hint": "Add at least one test_*.py test case and rerun run_tests.",
+                        }
+                    )
             status = "success" if proc.returncode == 0 else "error"
             return ToolResponse(tool_name=self.name, status=status, output=stdout + "\n" + stderr, details=details)
         except Exception as e:
-            return ToolResponse(tool_name=self.name, status="error", output=str(e))
+            err_text = str(e)
+            details: Dict[str, Any] = {"error_type": "tool_invocation_error"}
+            if isinstance(e, FileNotFoundError):
+                details["error_type"] = "pytest_not_installed"
+                details["action_hint"] = "Ensure pytest is installed or set run_tests pytest_cmd to a valid executable."
+            return ToolResponse(tool_name=self.name, status="error", output=err_text, details=details)
 

@@ -238,6 +238,11 @@ class OpenAIStreamStateMachine:
         if not call_id and not tool_name and not arguments_json:
             return None
 
+        # Ignore malformed tool-call frames that do not provide a usable tool name.
+        # In practice these frames are often transient duplicates from stream events.
+        if not (tool_name or "").strip():
+            return None
+
         return ParsedToolCall(
             tool_name=tool_name,
             call_id=call_id,

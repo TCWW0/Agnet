@@ -223,8 +223,14 @@ class LLMInvocationOrchestrator:
                     self._safe_json_dumps(call.arguments),
                 )
                 continue
+            call_info: LLMResponseFunCallMsg = LLMResponseFunCallMsg.from_raw(
+                tool_name=tool_name,
+                call_id=call.call_id,
+                arguments_json=call.arguments_json,
+                arguments=call.arguments,
+            )
             try:
-                tool_result = tools.execute_tool(tool_name, call.arguments)
+                tool_result = tools.execute_tool(call_info=call_info)
             except Exception as exc:
                 tool_result = ToolResponse(
                     tool_name=tool_name,

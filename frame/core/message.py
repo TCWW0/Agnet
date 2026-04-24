@@ -54,7 +54,7 @@ class LLMResponseFunCallMsg(Message):
         call_id: str,
         arguments_json: str,
         arguments: Dict[str, Any] | None = None,
-    ) -> "LLMResponseFunCallMsg":
+    ) -> LLMResponseFunCallMsg:
         parsed_args: Dict[str, Any]
         if arguments is not None:
             parsed_args = arguments
@@ -90,7 +90,7 @@ class ToolResponseMessage(Message):
         status: Literal["success", "error"],
         output: str,
         details: Dict[str, Any] | None = None,
-    ) -> "ToolResponseMessage":
+    ) -> ToolResponseMessage:
         return cls(
             role="tool",
             content=output,

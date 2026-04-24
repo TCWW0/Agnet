@@ -16,7 +16,6 @@ from frame.tool.base import (
 class ApplyPatchTool(BaseTool):
     """基于 unified diff (unified format) 的最小化 patch 应用工具。
 
-    限制与约束参见 frame/tool/builtin/need.md（workspace 限制、UTF-8、原子性）。
     """
 
     def __init__(self, workspace_root: str, max_patch_size: int = 1_000_000):

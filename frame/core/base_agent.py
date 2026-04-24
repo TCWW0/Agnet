@@ -29,7 +29,7 @@ class BaseAgent(ABC):
         self.llm_ = llm
         self.history_: List[Message] = []
         self.sys_prompt_: str = sys_prompt if sys_prompt is not None else SYS_PROMPT
-        self.history_.append(Message(role="system", content=self.sys_prompt_))
+        #self.history_.append(Message(role="system", content=self.sys_prompt_))
         self.logger_ = logger if logger is not None else global_logger
         self.cur_cost_tokens_: int = 0      # 可用于本地的简单统计
 

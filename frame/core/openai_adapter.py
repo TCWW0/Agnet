@@ -116,7 +116,9 @@ class OpenAIResponsesAdapter:
             if item_type == "message":
                 self._parse_message_item(item, parsed)
             elif item_type == "function_call":
-                parsed.tool_calls.append(self._parse_tool_call_item(item))
+                tool_call = self._parse_tool_call_item(item)
+                if (tool_call.tool_name or "").strip():
+                    parsed.tool_calls.append(tool_call)
         return parsed
 
     def build_function_call_outputs(self, records: List[ToolExecutionRecord]) -> List[OpenAIInputItem]:
@@ -152,6 +154,7 @@ class OpenAIResponsesAdapter:
             parsed.texts.extend(state.text_chunks)
 
         self._merge_stream_tool_calls(parsed, state.tool_calls)
+        self.logger_.debug(f"Stream consumption completed. Parsed response: text:{parsed.texts}, tool_calls:{[call.dict() for call in parsed.tool_calls]}")
         return parsed
 
     def _merge_stream_tool_calls(self, parsed: ParsedResponse, stream_calls: List[ParsedToolCall]) -> None:
