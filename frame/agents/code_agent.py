@@ -534,7 +534,7 @@ if __name__ == "__main__":
     llm = BaseLLM(llm_config)
     agent_config = AgentConfig.from_env()
 
-    agent = CodeAgent(config=agent_config, llm=llm, working_dir="code_space")
+    agent = CodeAgent(config=agent_config, llm=llm, working_dir="code_space_bak")
 
     demo_request = (
         "请帮我写一个 Python 函数 `is_palindrome(text: str) -> bool`，"
