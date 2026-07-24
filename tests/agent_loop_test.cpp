@@ -15,6 +15,7 @@ void check(bool condition, std::string_view description)
     }
 }
 
+// 当一个外部世界提交一个消息过后，对应的状态应该发生改变，同时附属的不变量不能够被违反
 void submit_from_idle_starts_streaming_turn()
 {
     const my_agent::Step step = my_agent::update(
@@ -34,18 +35,31 @@ void submit_from_idle_starts_streaming_turn()
     const my_agent::Thread& thread = step.model.thread;
 
     check(
-        thread.messages.size() == 1,
-        "submit should append exactly one message"
+        thread.messages.size() == 2,
+        "submit should append a input msg and an assistant placeholder"
     );
 
     check(
-        thread.messages.front().role == my_agent::Role::User,
+        thread.messages[0].role == my_agent::Role::User,
         "the appended message should belong to the user"
     );
 
     check(
-        thread.messages.front().text == "ping",
+        thread.messages[0].text == "ping",
         "the appended message should preserve its text"
+    );
+
+    // submit 被接受后，Core为本轮回复创建空的Assistant占位消息
+    check(
+        thread.messages[1].role == my_agent::Role::Assistant,
+        "the second message should be an assistant placeholder"
+    );
+
+    // 占位消息初始为空，后续Provider反馈由Runtime转换为Msg
+    // 再由 Core 通过 update() 追加文本
+    check(
+        thread.messages[1].text.empty(),
+        "the assistant placeholder should start empty"
     );
 
     check(

@@ -15,6 +15,14 @@ namespace my_agent{
         );
         model.phase = Streaming{};
 
+        // 接受用户提交后，预先创建本轮流式回复的 Assistant 占位消息
+        model.thread.messages.push_back(
+            Message{
+                .role = Role::Assistant,
+                .text = {},
+            }
+        );
+
         return Step{
             .model = std::move(model),
             .cmd = Cmd{

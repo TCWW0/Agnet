@@ -7,6 +7,7 @@
 namespace my_agent{
     enum class Role{
         User,
+        Assistant,
     };
 
     // 代表对话记录中的一条消息：谁说的+说了什么
@@ -15,7 +16,7 @@ namespace my_agent{
         std::string text;
     };
 
-    // 一个会话Session，由一段完整的会话历史所组成
+    // 一个会话线程，由一段完整的有顺序的会话历史所组成
     struct Thread{
         std::vector<Message> messages;
     };
