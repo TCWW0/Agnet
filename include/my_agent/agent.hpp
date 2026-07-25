@@ -45,16 +45,22 @@ namespace my_agent{
         std::string text;
     };
 
+    struct StreamTextDelta{
+        std::string text;
+    };
+
     // 一个Agent所能够接受事件的统一入口，注意是事件，当前Submit就是一种简单的文本的提交
-    using Msg = std::variant<Submit>;
+    using Msg = std::variant<Submit,StreamTextDelta>;
 
     // agent 核心希望交付给外部的信息，外部可以使用这个结构体中的信息来继续操作
     struct StartStream{
         std::string prompt;
     };
 
+    struct NoCommand{};
+
     // 从Agent中流转出来的信息，外界后续将只面对这个结构
-    using Cmd = std::variant<StartStream>;
+    using Cmd = std::variant<NoCommand,StartStream>;
 
     // 语义是 新的内部状态+需要执行的外部指令
     struct Step{
