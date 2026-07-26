@@ -49,8 +49,11 @@ namespace my_agent{
         std::string text;
     };
 
+    struct StreamFinished{
+    };
+
     // 一个Agent所能够接受事件的统一入口，注意是事件，当前Submit就是一种简单的文本的提交
-    using Msg = std::variant<Submit,StreamTextDelta>;
+    using Msg = std::variant<Submit,StreamTextDelta,StreamFinished>;
 
     // agent 核心希望交付给外部的信息，外部可以使用这个结构体中的信息来继续操作
     struct StartStream{
@@ -68,6 +71,9 @@ namespace my_agent{
         Cmd cmd;
     };
 
+    // 根据一个 Msg 生成后继 Model 和需要执行的 Cmd。
+    // Model 按值传入：调用方可以复制旧快照，也可以通过 std::move()
+    // 转移状态所有权。update() 不保留对输入 Model 或 Msg 的引用。
     [[nodiscard]]
     Step update(Model model,Msg msg);
 }// namespace my_agent

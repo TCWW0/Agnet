@@ -32,9 +32,14 @@ namespace my_agent{
             latest_msg.text += delta.text;
             return NoCommand{};
         }
+
+        Cmd apply(Model& model,const StreamFinished&)
+        {
+            model.phase = my_agent::Idle{};
+            return NoCommand{};
+        }
     }
 
-    // 对于update，其可能接受不同类型的msg，对应的 Msg 代表的多种类型其都已经被发配来进行处理
     Step update(Model model,Msg msg)
     {
         Cmd cmd = std::visit(
