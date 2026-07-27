@@ -1,0 +1,63 @@
+#include <cstddef>
+#include <gtest/gtest.h>
+#include <string>
+#include <variant>
+#include "my_agent/agent.hpp"
+#include "my_agent/headless_runner.hpp"
+
+TEST(HeadlessRunnerTest, CompletesStreamingTurnWithFakeProvider)
+{
+    int stream_calls = 0;
+    std::string received_prompt;
+
+    my_agent::StreamEffect fake_stream = 
+        [&](my_agent::StartStream request,my_agent::EventSink sink){
+            ++stream_calls;
+            received_prompt = std::move(request.prompt);
+            sink(
+                my_agent::Msg{
+                    my_agent::StreamTextDelta{
+                        .text = "po",
+                    }
+                }
+            );
+            sink(
+                my_agent::Msg{
+                    my_agent::StreamTextDelta{
+                        .text = "ng",
+                    },
+                }
+            );
+            sink(
+                my_agent::Msg{
+                    my_agent::StreamFinished{},
+                }
+            );
+        };
+
+    my_agent::HeadlessRunner runner{
+        std::move(fake_stream),
+    };
+
+    // 此时使用的是一个空的model
+    const my_agent::Model& final_model = runner.dispatch(
+        my_agent::Msg{
+            my_agent::Submit{
+                .text = "ping",
+            },
+        }
+    );
+
+    EXPECT_EQ(1,stream_calls);
+    EXPECT_EQ("ping",received_prompt);
+
+    EXPECT_TRUE(std::holds_alternative<my_agent::Idle>(final_model.phase));
+
+    const my_agent::Thread& thread = final_model.thread;
+
+    ASSERT_EQ(std::size_t{2},thread.messages.size());
+    EXPECT_EQ(my_agent::Role::User, thread.messages[0].role);
+    EXPECT_EQ("ping", thread.messages[0].text);
+    EXPECT_EQ(my_agent::Role::Assistant, thread.messages[1].role);
+    EXPECT_EQ("pong",thread.messages[1].text);
+}
