@@ -44,7 +44,9 @@ TEST(AgentLoopTest, SubmitFromIdleStartsStreamingTurn)
     const my_agent::StartStream& command =
         std::get<my_agent::StartStream>(step.cmd);
 
-    EXPECT_EQ("ping", command.prompt);
+    ASSERT_EQ(std::size_t{1}, command.request.messages.size());
+    EXPECT_EQ(my_agent::Role::User, command.request.messages[0].role);
+    EXPECT_EQ("ping", command.request.messages[0].text);
 }
 
 // 当 Runtime 成功处理 StartStream 并产生 StreamTextDelta 后，Core 应当

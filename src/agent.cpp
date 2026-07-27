@@ -16,13 +16,17 @@ namespace my_agent{
                 .role = my_agent::Role::User,
                 .text = submit.text,
             });
+
+            Request request{
+                .messages = model.thread.messages,
+            };
+
             model.thread.messages.push_back(Message{
                 .role = my_agent::Role::Assistant,
                 .text = {}
             });
             model.phase = Streaming{};
-            // TODO: 做出更合适的上下文的包装，后续需要考虑这个暴露出去的事件应该如何来处理：是要一次性返回全部Prompt还是每次增量返回
-            return StartStream{.prompt = submit.text};
+            return StartStream{.request = std::move(request)};
         }
 
         Cmd apply(Model& model,const StreamTextDelta& delta)

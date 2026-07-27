@@ -4,9 +4,9 @@
 #include <vector>
 
 namespace my_agent{
-    // 
+
     using EventSink = std::function<void(Msg)>;
-    using StreamEffect = std::function<void(StartStream,EventSink)>;
+    using StreamEffect = std::function<void(Request,EventSink)>;
 
     class HeadlessRunner{
     public:

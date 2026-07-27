@@ -1,6 +1,8 @@
 #include <cstddef>
 #include <gtest/gtest.h>
+#include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include "my_agent/agent.hpp"
 #include "my_agent/headless_runner.hpp"
@@ -8,12 +10,12 @@
 TEST(HeadlessRunnerTest, CompletesStreamingTurnWithFakeProvider)
 {
     int stream_calls = 0;
-    std::string received_prompt;
+    std::string received_user_text;
 
     my_agent::StreamEffect fake_stream = 
-        [&](my_agent::StartStream request,my_agent::EventSink sink){
+        [&](my_agent::Request request,my_agent::EventSink sink){
             ++stream_calls;
-            received_prompt = std::move(request.prompt);
+            received_user_text = std::move(request.messages.front().text);
             sink(
                 my_agent::Msg{
                     my_agent::StreamTextDelta{
@@ -49,7 +51,7 @@ TEST(HeadlessRunnerTest, CompletesStreamingTurnWithFakeProvider)
     );
 
     EXPECT_EQ(1,stream_calls);
-    EXPECT_EQ("ping",received_prompt);
+    EXPECT_EQ("ping",received_user_text);
 
     EXPECT_TRUE(std::holds_alternative<my_agent::Idle>(final_model.phase));
 
@@ -60,4 +62,51 @@ TEST(HeadlessRunnerTest, CompletesStreamingTurnWithFakeProvider)
     EXPECT_EQ("ping", thread.messages[0].text);
     EXPECT_EQ(my_agent::Role::Assistant, thread.messages[1].role);
     EXPECT_EQ("pong",thread.messages[1].text);
+}
+
+TEST(HeadlessRunnerTest, SecondTurnRequestContainsPriorConversationAndLatestUserMessage)
+{
+    std::optional<my_agent::Request> latest_request;
+    std::string reply = "first answer";
+
+    my_agent::StreamEffect fake_stream =
+        [&](my_agent::Request request,my_agent::EventSink sink){
+            latest_request = std::move(request);
+
+            sink(my_agent::Msg{
+                my_agent::StreamTextDelta{.text=reply},
+            });
+            sink(my_agent::Msg{
+                my_agent::StreamFinished{},
+            });
+        };
+
+    my_agent::HeadlessRunner runner {
+        fake_stream
+    };
+
+    (void)runner.dispatch(my_agent::Msg{
+        my_agent::Submit{.text = "first question"},
+    });
+
+    latest_request.reset();
+    reply = "second answer";
+
+    (void)runner.dispatch(my_agent::Msg{
+        my_agent::Submit{.text = "second question"},
+    });
+
+    ASSERT_TRUE(latest_request.has_value());
+
+    const auto& messages = latest_request->messages;
+    ASSERT_EQ(std::size_t{3}, messages.size());
+
+    EXPECT_EQ(my_agent::Role::User, messages[0].role);
+    EXPECT_EQ("first question", messages[0].text);
+
+    EXPECT_EQ(my_agent::Role::Assistant, messages[1].role);
+    EXPECT_EQ("first answer", messages[1].text);
+
+    EXPECT_EQ(my_agent::Role::User, messages[2].role);
+    EXPECT_EQ("second question", messages[2].text);
 }

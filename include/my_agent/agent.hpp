@@ -21,6 +21,10 @@ namespace my_agent{
         std::vector<Message> messages;
     };
 
+    struct Request{
+        std::vector<Message> messages;
+    };
+
     // 明确表示一个Thread的闲置状态
     struct Idle{
     };
@@ -57,7 +61,7 @@ namespace my_agent{
 
     // agent 核心希望交付给外部的信息，外部可以使用这个结构体中的信息来继续操作
     struct StartStream{
-        std::string prompt;
+        Request request;
     };
 
     struct NoCommand{};

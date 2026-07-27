@@ -20,7 +20,7 @@ namespace my_agent {
             pending_msgs_.push_back(std::move(msg));
         };
         stream_(
-            std::move(cmd),
+            std::move(cmd.request),
             std::move(enqueue)
         );
     }
