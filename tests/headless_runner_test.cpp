@@ -139,3 +139,33 @@ TEST(HeadlessRunnerTest, ProviderErrorWithoutTextReturnsToIdleAndMarksAssistantM
     ASSERT_TRUE(assistant.error.has_value());
     EXPECT_EQ("network unavailable", *assistant.error);
 }
+
+TEST(HeadlessRunnerTest, ProviderErrorAfterTextPreservesPartialAssistantMessage)
+{
+    my_agent::StreamEffect fake_stream =
+        [](my_agent::Request, my_agent::EventSink sink) {
+            sink(my_agent::Msg{
+                my_agent::StreamTextDelta{.text = "partial answer"},
+            });
+            sink(my_agent::Msg{
+                my_agent::StreamError{.message = "content filtering policy"},
+            });
+        };
+
+    my_agent::HeadlessRunner runner{std::move(fake_stream)};
+
+    const my_agent::Model& model = runner.dispatch(my_agent::Msg{
+        my_agent::Submit{.text = "answer this question"},
+    });
+
+    EXPECT_TRUE(std::holds_alternative<my_agent::Idle>(model.phase));
+
+    const my_agent::Thread& thread = model.thread;
+    ASSERT_EQ(std::size_t{2}, thread.messages.size());
+
+    const my_agent::Message& assistant = thread.messages[1];
+    EXPECT_EQ(my_agent::Role::Assistant, assistant.role);
+    EXPECT_EQ("partial answer", assistant.text);
+    ASSERT_TRUE(assistant.error.has_value());
+    EXPECT_EQ("content filtering policy", *assistant.error);
+}
