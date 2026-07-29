@@ -42,6 +42,14 @@ namespace my_agent{
             model.phase = my_agent::Idle{};
             return NoCommand{};
         }
+
+        Cmd apply(Model& model,const StreamError& err)
+        {
+            model.phase = my_agent::Idle{};
+            my_agent::Message& latest_msg = model.thread.messages.back();
+            latest_msg.error = err.message;
+            return NoCommand{};
+        }
     }
 
     Step update(Model model,Msg msg)

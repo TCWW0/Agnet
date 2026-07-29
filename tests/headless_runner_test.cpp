@@ -110,3 +110,32 @@ TEST(HeadlessRunnerTest, SecondTurnRequestContainsPriorConversationAndLatestUser
     EXPECT_EQ(my_agent::Role::User, messages[2].role);
     EXPECT_EQ("second question", messages[2].text);
 }
+
+TEST(HeadlessRunnerTest, ProviderErrorWithoutTextReturnsToIdleAndMarksAssistantMessage)
+{
+    my_agent::StreamEffect fake_stream =
+        [](my_agent::Request, my_agent::EventSink sink) {
+            sink(my_agent::Msg{
+                my_agent::StreamError{.message = "network unavailable"},
+            });
+        };
+
+    my_agent::HeadlessRunner runner{std::move(fake_stream)};
+
+    const my_agent::Model& model = runner.dispatch(my_agent::Msg{
+        my_agent::Submit{.text = "StreamError Test"},
+    });
+
+    EXPECT_TRUE(std::holds_alternative<my_agent::Idle>(model.phase));
+
+    const my_agent::Thread& thread = model.thread;
+    ASSERT_EQ(std::size_t{2}, thread.messages.size());
+    EXPECT_EQ(my_agent::Role::User, thread.messages[0].role);
+    EXPECT_EQ("StreamError Test", thread.messages[0].text);
+
+    const my_agent::Message& assistant = thread.messages[1];
+    EXPECT_EQ(my_agent::Role::Assistant, assistant.role);
+    EXPECT_TRUE(assistant.text.empty());
+    ASSERT_TRUE(assistant.error.has_value());
+    EXPECT_EQ("network unavailable", *assistant.error);
+}

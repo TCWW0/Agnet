@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -14,6 +15,7 @@ namespace my_agent{
     struct Message{
         Role role;
         std::string text;
+        std::optional<std::string> error;
     };
 
     // 一个会话线程，由一段完整的有顺序的会话历史所组成
@@ -53,11 +55,15 @@ namespace my_agent{
         std::string text;
     };
 
+    struct StreamError{
+        std::string message;
+    };
+
     struct StreamFinished{
     };
 
     // 一个Agent所能够接受事件的统一入口，注意是事件，当前Submit就是一种简单的文本的提交
-    using Msg = std::variant<Submit,StreamTextDelta,StreamFinished>;
+    using Msg = std::variant<Submit,StreamTextDelta,StreamFinished,StreamError>;
 
     // agent 核心希望交付给外部的信息，外部可以使用这个结构体中的信息来继续操作
     struct StartStream{
