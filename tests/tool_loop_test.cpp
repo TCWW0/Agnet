@@ -173,3 +173,171 @@ TEST(ToolLoopTest, MultipleToolCallsRunInEmissionOrderBeforeStreamingContinues)
     EXPECT_EQ("calculator-call-2", tool_message.tool_calls[1].id);
     EXPECT_EQ("40", tool_message.tool_calls[1].output());
 }
+
+TEST(ToolLoopTest, ContinuesWithLaterToolAfterEarlierToolFails)
+{
+    std::vector<my_agent::Request> received_requests;
+    std::size_t provider_turn = 0;
+
+    my_agent::StreamEffect fake_stream =
+        [&](my_agent::Request request, my_agent::EventSink sink) {
+            received_requests.push_back(std::move(request));
+
+            if (provider_turn++ == 0) {
+                sink(my_agent::Msg{
+                    my_agent::StreamToolCall{
+                        .id = "calculator-call-1",
+                        .name = "calculator",
+                        .args = nlohmann::json{
+                            {"operation", "divide"},
+                            {"left", 6},
+                            {"right", 3},
+                        },
+                    },
+                });
+                sink(my_agent::Msg{
+                    my_agent::StreamToolCall{
+                        .id = "calculator-call-2",
+                        .name = "calculator",
+                        .args = nlohmann::json{
+                            {"operation", "multiply"},
+                            {"left", 5},
+                            {"right", 8},
+                        },
+                    },
+                });
+            } else {
+                sink(my_agent::Msg{
+                    my_agent::StreamTextDelta{
+                        .text = "The first calculation failed; "
+                                "the second result is 40.",
+                    },
+                });
+            }
+
+            sink(my_agent::Msg{my_agent::StreamFinished{}});
+        };
+
+    my_agent::HeadlessRunner runner{std::move(fake_stream)};
+
+    const my_agent::Model& model = runner.dispatch(my_agent::Msg{
+        my_agent::Submit{.text = "Divide 6 by 3 and multiply 5 by 8"},
+    });
+
+    EXPECT_TRUE(std::holds_alternative<my_agent::Idle>(model.phase));
+    ASSERT_EQ(std::size_t{2}, received_requests.size());
+
+    const my_agent::Request& continuation_request = received_requests[1];
+    ASSERT_EQ(std::size_t{2}, continuation_request.messages.size());
+
+    const my_agent::Message& tool_message =
+        continuation_request.messages[1];
+    ASSERT_EQ(std::size_t{2}, tool_message.tool_calls.size());
+
+    const my_agent::ToolCall& failed_call = tool_message.tool_calls[0];
+    EXPECT_EQ("calculator-call-1", failed_call.id);
+    EXPECT_TRUE(std::holds_alternative<my_agent::ToolCall::Failed>(
+        failed_call.status
+    ));
+    EXPECT_EQ(
+        "[invalid args] unsupported calculator operation: divide",
+        failed_call.output()
+    );
+
+    const my_agent::ToolCall& successful_call = tool_message.tool_calls[1];
+    EXPECT_EQ("calculator-call-2", successful_call.id);
+    EXPECT_TRUE(std::holds_alternative<my_agent::ToolCall::Done>(
+        successful_call.status
+    ));
+    EXPECT_EQ("40", successful_call.output());
+
+    ASSERT_EQ(std::size_t{3}, model.thread.messages.size());
+    EXPECT_EQ(
+        "The first calculation failed; the second result is 40.",
+        model.thread.messages[2].text
+    );
+}
+
+TEST(ToolLoopTest, ContinuesStreamingWhenFinalToolInBatchFails)
+{
+    std::vector<my_agent::Request> received_requests;
+    std::size_t provider_turn = 0;
+
+    my_agent::StreamEffect fake_stream =
+        [&](my_agent::Request request, my_agent::EventSink sink) {
+            received_requests.push_back(std::move(request));
+
+            if (provider_turn++ == 0) {
+                sink(my_agent::Msg{
+                    my_agent::StreamToolCall{
+                        .id = "calculator-call-1",
+                        .name = "calculator",
+                        .args = nlohmann::json{
+                            {"operation", "multiply"},
+                            {"left", 6},
+                            {"right", 7},
+                        },
+                    },
+                });
+                sink(my_agent::Msg{
+                    my_agent::StreamToolCall{
+                        .id = "calculator-call-2",
+                        .name = "calculator",
+                        .args = nlohmann::json{
+                            {"operation", "divide"},
+                            {"left", 8},
+                            {"right", 2},
+                        },
+                    },
+                });
+            } else {
+                sink(my_agent::Msg{
+                    my_agent::StreamTextDelta{
+                        .text = "The first result is 42; "
+                                "the second calculation failed.",
+                    },
+                });
+            }
+
+            sink(my_agent::Msg{my_agent::StreamFinished{}});
+        };
+
+    my_agent::HeadlessRunner runner{std::move(fake_stream)};
+
+    const my_agent::Model& model = runner.dispatch(my_agent::Msg{
+        my_agent::Submit{.text = "Multiply 6 by 7 and divide 8 by 2"},
+    });
+
+    EXPECT_TRUE(std::holds_alternative<my_agent::Idle>(model.phase));
+    ASSERT_EQ(std::size_t{2}, received_requests.size());
+
+    const my_agent::Request& continuation_request = received_requests[1];
+    ASSERT_EQ(std::size_t{2}, continuation_request.messages.size());
+
+    const my_agent::Message& tool_message =
+        continuation_request.messages[1];
+    ASSERT_EQ(std::size_t{2}, tool_message.tool_calls.size());
+
+    const my_agent::ToolCall& successful_call = tool_message.tool_calls[0];
+    EXPECT_EQ("calculator-call-1", successful_call.id);
+    EXPECT_TRUE(std::holds_alternative<my_agent::ToolCall::Done>(
+        successful_call.status
+    ));
+    EXPECT_EQ("42", successful_call.output());
+
+    const my_agent::ToolCall& failed_call = tool_message.tool_calls[1];
+    EXPECT_EQ("calculator-call-2", failed_call.id);
+    EXPECT_TRUE(std::holds_alternative<my_agent::ToolCall::Failed>(
+        failed_call.status
+    ));
+    EXPECT_EQ(
+        "[invalid args] unsupported calculator operation: divide",
+        failed_call.output()
+    );
+
+    ASSERT_EQ(std::size_t{3}, model.thread.messages.size());
+    EXPECT_EQ(
+        "The first result is 42; the second calculation failed.",
+        model.thread.messages[2].text
+    );
+}
