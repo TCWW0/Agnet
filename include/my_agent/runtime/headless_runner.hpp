@@ -1,13 +1,11 @@
 #pragma once
-#include "my_agent/agent.hpp"
-#include <functional>
+
+#include "my_agent/provider/provider.hpp"
+#include "my_agent/runtime/agent.hpp"
+
 #include <vector>
 
 namespace my_agent{
-
-    using EventSink = std::function<void(Msg)>;
-    using StreamEffect = std::function<void(Request,EventSink)>;
-
     class HeadlessRunner{
     public:
         explicit HeadlessRunner(StreamEffect stream);
@@ -17,10 +15,11 @@ namespace my_agent{
         // StreamEffect must invoke EventSink synchronously before returning.
         [[nodiscard]]
         const Model& dispatch(Msg msg);
-    
+
     private:
         void execute_cmd(NoCommand command);
         void execute_cmd(StartStream command);
+        void execute_cmd(RunTool command);
 
     private:
         std::vector<Msg>    pending_msgs_;

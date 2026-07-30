@@ -4,8 +4,8 @@
 #include <string>
 #include <utility>
 #include <variant>
-#include "my_agent/agent.hpp"
-#include "my_agent/headless_runner.hpp"
+#include "my_agent/runtime/agent.hpp"
+#include "my_agent/runtime/headless_runner.hpp"
 
 TEST(HeadlessRunnerTest, CompletesStreamingTurnWithFakeProvider)
 {

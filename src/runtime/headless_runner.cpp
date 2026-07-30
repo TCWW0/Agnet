@@ -1,11 +1,28 @@
-#include "my_agent/headless_runner.hpp"
-#include "my_agent/agent.hpp"
+#include "my_agent/runtime/headless_runner.hpp"
 
+#include "my_agent/runtime/agent.hpp"
+#include "my_agent/tool/tool.hpp"
+
+#include <cassert>
 #include <cstddef>
-#include <vector>
+#include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace my_agent {
+    namespace {
+        bool has_pending_tool_calls(const Request& request) noexcept
+        {
+            for (const Message& message : request.messages) {
+                for (const ToolCall& tool_call : message.tool_calls) {
+                    if (tool_call.is_pending()) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+    }
 
     HeadlessRunner::HeadlessRunner(StreamEffect stream)
         :stream_(std::move(stream))
@@ -16,6 +33,14 @@ namespace my_agent {
     }
 
     void HeadlessRunner::execute_cmd(StartStream cmd){
+        const bool has_pending = has_pending_tool_calls(cmd.request);
+        assert(!has_pending && "cannot start stream with pending tool calls");
+        if (has_pending) {
+            throw std::logic_error{
+                "cannot start stream with pending tool calls"
+            };
+        }
+
         EventSink enqueue= [this](Msg msg){
             pending_msgs_.push_back(std::move(msg));
         };
@@ -23,6 +48,16 @@ namespace my_agent {
             std::move(cmd.request),
             std::move(enqueue)
         );
+    }
+
+    void HeadlessRunner::execute_cmd(RunTool cmd){
+        tool::ExecResult result = tool::execute(cmd.name,cmd.args);
+        pending_msgs_.push_back(Msg{
+            ToolExecOutput{
+                .id = std::move(cmd.id),
+                .result = std::move(result),
+            },
+        });
     }
 
 
