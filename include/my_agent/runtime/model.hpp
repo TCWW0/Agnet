@@ -1,6 +1,7 @@
 #pragma once
 
 #include "my_agent/domain/conversation.hpp"
+#include "my_agent/domain/profile.hpp"
 
 #include <variant>
 
@@ -20,5 +21,6 @@ namespace my_agent{
     struct Model{
         Phase phase{Idle{}};
         Thread thread{};
+        Profile profile{Profile::Write};
     };
 }// namespace my_agent

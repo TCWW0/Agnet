@@ -143,6 +143,12 @@ namespace my_agent{
             model.phase = Streaming{};
             return StartStream{.request = std::move(request)};
         }
+
+        Cmd apply(Model& model,const SetProfile& event)
+        {
+            model.profile = event.profile;
+            return NoCommand{};
+        }
     }
 
     Step update(Model model,Msg msg)

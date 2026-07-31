@@ -34,6 +34,7 @@ enable_testing()
 
 add_library(
     my_agent_tools
+    src/tool/read.cpp
     src/tool/registry.cpp
 )
 
@@ -145,4 +146,53 @@ target_link_libraries(
 gtest_discover_tests(
     tool_loop_test
     TEST_PREFIX "tool_loop."
+)
+
+add_executable(
+    tool_policy_test
+    tests/tool_policy_test.cpp
+)
+
+target_link_libraries(
+    tool_policy_test
+    PRIVATE
+        my_agent_tools
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    tool_policy_test
+    TEST_PREFIX "tool_policy."
+)
+
+add_executable(
+    profile_test
+    tests/profile_test.cpp
+)
+
+target_link_libraries(
+    profile_test
+    PRIVATE
+        my_agent_core
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    profile_test
+    TEST_PREFIX "profile."
+)
+
+add_executable(
+    read_tool_test
+    tests/read_tool_test.cpp
+)
+target_link_libraries(
+    read_tool_test
+    PRIVATE
+        my_agent_tools
+        GTest::gtest_main
+)
+gtest_discover_tests(
+    read_tool_test
+    TEST_PREFIX "read_tool."
 )

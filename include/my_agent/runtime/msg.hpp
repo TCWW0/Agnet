@@ -1,5 +1,6 @@
 #pragma once
 
+#include "my_agent/domain/profile.hpp"
 #include "my_agent/tool/tool.hpp"
 
 #include <string>
@@ -37,7 +38,11 @@ namespace my_agent{
     struct StreamFinished{
     };
 
+    struct SetProfile{
+        Profile profile;
+    };
+
     // 一个Agent所能够接受事件的统一入口，注意是事件，当前Submit就是一种简单的文本的提交
     using Msg = std::variant<Submit,StreamTextDelta,StreamToolCall,
-        StreamFinished,StreamError,ToolExecOutput>;
+        StreamFinished,StreamError,ToolExecOutput,SetProfile>;
 }// namespace my_agent

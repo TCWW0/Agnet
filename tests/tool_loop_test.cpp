@@ -1,6 +1,7 @@
 #include "my_agent/runtime/agent.hpp"
 #include "my_agent/runtime/headless_runner.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <utility>
@@ -53,8 +54,13 @@ TEST(ToolLoopTest, ExecutesCalculatorToolAndContinuesToFinalAnswer)
     ASSERT_EQ(std::size_t{2}, received_requests.size());
 
     const my_agent::Request& initial_request = received_requests[0];
-    ASSERT_EQ(std::size_t{1}, initial_request.tools.size());
-    EXPECT_EQ("calculator", initial_request.tools[0].name);
+    const auto calculator = std::ranges::find_if(
+        initial_request.tools,
+        [](const my_agent::ToolSpec& tool) {
+            return tool.name == "calculator";
+        }
+    );
+    ASSERT_NE(initial_request.tools.end(), calculator);
 
     const my_agent::Request& continuation_request = received_requests[1];
     ASSERT_EQ(std::size_t{2}, continuation_request.messages.size());

@@ -8,6 +8,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "my_agent/tool/effects.hpp"
+
 namespace my_agent::tool {
 
 struct ToolOutput {
@@ -17,6 +19,7 @@ struct ToolOutput {
 enum class ErrorKind {
     InvalidArgs,
     NotFound,
+    OutOfWorkspace,
 };
 
 struct ToolError {
@@ -33,6 +36,7 @@ struct ToolDef {
     std::string name;
     std::string description;
     nlohmann::json input_schema;
+    EffectSet effects{};
     std::function<ExecResult(const nlohmann::json&)> execute;
 };
 
