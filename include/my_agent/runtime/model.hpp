@@ -3,6 +3,8 @@
 #include "my_agent/domain/conversation.hpp"
 #include "my_agent/domain/profile.hpp"
 
+#include <optional>
+#include <string>
 #include <variant>
 
 namespace my_agent{
@@ -14,13 +16,21 @@ namespace my_agent{
     struct Streaming{
     };
 
+    struct AwaitingPermission {
+    };
+
+    struct ExecutingTool {
+        std::string id;
+    };
+
     // 将多个阶段聚合。这样即能够保证一个状态的原子性以及独占性，也能方便管理
-    using Phase = std::variant<Idle,Streaming>;
+    using Phase = std::variant<Idle,Streaming,AwaitingPermission,ExecutingTool>;
 
     // 这是对于系统核心的瞬时建模，应该包含的是当前系统的状态信息
     struct Model{
         Phase phase{Idle{}};
         Thread thread{};
         Profile profile{Profile::Write};
+        std::optional<PendingPermission> pending_permission{};
     };
 }// namespace my_agent

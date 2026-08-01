@@ -21,8 +21,11 @@ namespace my_agent{
         struct Failed{
             std::string output;
         };
+        struct Rejected{
+            std::string output;
+        };
 
-        using Status = std::variant<Pending,Done,Failed>;
+        using Status = std::variant<Pending,Done,Failed,Rejected>;
 
         std::string id;
         std::string name;
@@ -47,5 +50,9 @@ namespace my_agent{
     // 一个会话线程，由一段完整的有顺序的会话历史所组成
     struct Thread{
         std::vector<Message> messages;
+    };
+
+    struct PendingPermission {
+        std::string id;
     };
 }// namespace my_agent

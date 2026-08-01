@@ -3,6 +3,7 @@
 #include "my_agent/domain/profile.hpp"
 #include "my_agent/tool/tool.hpp"
 
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -42,7 +43,17 @@ namespace my_agent{
         Profile profile;
     };
 
+    struct PermissionApprove {
+        std::string id;
+    };
+
+    struct PermissionReject{
+        std::string id;
+        std::optional<std::string> feedback{};
+    };
+
     // 一个Agent所能够接受事件的统一入口，注意是事件，当前Submit就是一种简单的文本的提交
     using Msg = std::variant<Submit,StreamTextDelta,StreamToolCall,
-        StreamFinished,StreamError,ToolExecOutput,SetProfile>;
+        StreamFinished,StreamError,ToolExecOutput,SetProfile,PermissionApprove,
+        PermissionReject>;
 }// namespace my_agent

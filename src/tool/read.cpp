@@ -46,7 +46,7 @@ namespace my_agent::tool::detail{
             if(error || target.empty()) {
                 return std::unexpected(ToolError{
                     .kind = ErrorKind::OutOfWorkspace,
-                    .message = "read could not prove path is within woekspace: "
+                    .message = "read could not prove path is within workspace: "
                     + requested.string()
                     + " (workspace: "
                     + workspace_root.string()

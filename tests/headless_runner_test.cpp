@@ -1,11 +1,14 @@
+#include "my_agent/runtime/agent.hpp"
+#include "my_agent/runtime/headless_runner.hpp"
+
 #include <cstddef>
-#include <gtest/gtest.h>
 #include <optional>
 #include <string>
 #include <utility>
 #include <variant>
-#include "my_agent/runtime/agent.hpp"
-#include "my_agent/runtime/headless_runner.hpp"
+
+#include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 TEST(HeadlessRunnerTest, CompletesStreamingTurnWithFakeProvider)
 {
@@ -168,4 +171,76 @@ TEST(HeadlessRunnerTest, ProviderErrorAfterTextPreservesPartialAssistantMessage)
     EXPECT_EQ("partial answer", assistant.text);
     ASSERT_TRUE(assistant.error.has_value());
     EXPECT_EQ("content filtering policy", *assistant.error);
+}
+
+TEST(HeadlessRunnerTest, ExternalApprovalResumesPermissionPausedTurnToCompletion)
+{
+    int stream_calls = 0;
+    std::optional<my_agent::Request> continuation_request;
+
+    my_agent::StreamEffect fake_stream =
+        [&](my_agent::Request request, my_agent::EventSink sink) {
+            ++stream_calls;
+
+            if (stream_calls == 1) {
+                sink(my_agent::Msg{
+                    my_agent::StreamToolCall{
+                        .id = "read-call-1",
+                        .name = "read",
+                        .args = nlohmann::json{{"path", "CMakeCache.txt"}},
+                    },
+                });
+            } else {
+                continuation_request = std::move(request);
+                sink(my_agent::Msg{
+                    my_agent::StreamTextDelta{
+                        .text = "The requested project file was processed.",
+                    },
+                });
+            }
+
+            sink(my_agent::Msg{my_agent::StreamFinished{}});
+        };
+
+    my_agent::HeadlessRunner runner{std::move(fake_stream)};
+
+    (void)runner.dispatch(my_agent::Msg{
+        my_agent::SetProfile{.profile = my_agent::Profile::Minimal},
+    });
+
+    const my_agent::Model& awaiting_permission = runner.dispatch(
+        my_agent::Msg{
+            my_agent::Submit{.text = "Read CMakeCache.txt"},
+        }
+    );
+
+    EXPECT_EQ(1, stream_calls);
+    EXPECT_TRUE(std::holds_alternative<my_agent::AwaitingPermission>(
+        awaiting_permission.phase
+    ));
+    ASSERT_TRUE(awaiting_permission.pending_permission.has_value());
+    EXPECT_EQ("read-call-1", awaiting_permission.pending_permission->id);
+
+    const my_agent::Model& completed = runner.dispatch(my_agent::Msg{
+        my_agent::PermissionApprove{.id = "read-call-1"},
+    });
+
+    EXPECT_EQ(2, stream_calls);
+    EXPECT_TRUE(std::holds_alternative<my_agent::Idle>(completed.phase));
+    EXPECT_FALSE(completed.pending_permission.has_value());
+
+    ASSERT_TRUE(continuation_request.has_value());
+    ASSERT_EQ(std::size_t{2}, continuation_request->messages.size());
+
+    const my_agent::Message& tool_message =
+        continuation_request->messages.back();
+    ASSERT_EQ(std::size_t{1}, tool_message.tool_calls.size());
+    EXPECT_EQ("read-call-1", tool_message.tool_calls[0].id);
+    EXPECT_FALSE(tool_message.tool_calls[0].is_pending());
+
+    ASSERT_EQ(std::size_t{3}, completed.thread.messages.size());
+    EXPECT_EQ(
+        "The requested project file was processed.",
+        completed.thread.messages.back().text
+    );
 }

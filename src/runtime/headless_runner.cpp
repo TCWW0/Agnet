@@ -4,7 +4,6 @@
 #include "my_agent/tool/tool.hpp"
 
 #include <cassert>
-#include <cstddef>
 #include <stdexcept>
 #include <utility>
 #include <vector>

@@ -18,6 +18,9 @@ namespace my_agent{
         if (const auto* failed = std::get_if<Failed>(&status)) {
             return failed->output;
         }
+        if (const auto* rejected = std::get_if<Rejected>(&status)){
+            return rejected->output;
+        }
         return empty;
     }
 }// namespace my_agent
