@@ -32,6 +32,8 @@ include(GoogleTest)
 
 enable_testing()
 
+find_package(Threads REQUIRED)
+
 add_library(
     my_agent_tools
     src/tool/read.cpp
@@ -129,6 +131,46 @@ target_link_libraries(
 gtest_discover_tests(
     headless_runner_test
     TEST_PREFIX "headless_runner."
+)
+
+add_library(
+    my_agent_async_runtime
+    src/runtime/async_host.cpp
+)
+
+target_include_directories(
+    my_agent_async_runtime
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_async_runtime
+    PUBLIC cxx_std_23
+)
+
+target_link_libraries(
+    my_agent_async_runtime
+    PUBLIC
+        my_agent_core
+        Threads::Threads
+)
+
+add_executable(
+    async_host_test
+    tests/async_host_test.cpp
+)
+
+target_link_libraries(
+    async_host_test
+    PRIVATE
+        my_agent_async_runtime
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    async_host_test
+    TEST_PREFIX "async_host."
 )
 
 add_executable(
