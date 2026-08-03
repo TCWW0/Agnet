@@ -2,6 +2,7 @@
 #include "my_agent/prompt/system_prompt.hpp"
 #include "my_agent/provider/ollama.hpp"
 #include "my_agent/runtime/async_host.hpp"
+#include "my_agent/tool/memory_store.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -9,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -82,6 +84,23 @@ my_agent::Profile parse_profile(std::string_view name)
     return my_agent::Profile::Write;
 }
 
+// 两个 scope 的记录都注入，project 在后 —— 更贴近当前工作的事实离指令更近。
+// 渲染带上 id，模型才能在用户说「忘掉那条」时精确调 forget。
+std::vector<std::string> load_memories()
+{
+    namespace memory = my_agent::tool::memory;
+
+    const memory::MemoryStore store{memory::discover_roots()};
+
+    std::vector<std::string> lines;
+    for (const memory::Scope scope : {memory::Scope::User, memory::Scope::Project}) {
+        for (const memory::Record& record : store.load_all(scope)) {
+            lines.push_back(memory::render_for_prompt(record));
+        }
+    }
+    return lines;
+}
+
 void report_errors(const my_agent::Model& model)
 {
     if (model.thread.messages.empty()) {
@@ -112,9 +131,13 @@ int main()
         ),
     };
 
-    // 每轮重新构建：memory 与 skill 目录会在会话过程中变化。
+    // 每轮重新构建：memory 与 skill 目录会在会话过程中变化。remember 工具刚写下
+    // 的事实，下一轮就必须出现在提示里 —— 这正是 provider 是函数而不是字符串的
+    // 理由。
     host_runtime.set_system_prompt_provider([] {
-        return my_agent::prompt::build(my_agent::prompt::capture_environment());
+        my_agent::prompt::Context context = my_agent::prompt::capture_environment();
+        context.memories = load_memories();
+        return my_agent::prompt::build(context);
     });
 
     host_runtime.dispatch(my_agent::Msg{

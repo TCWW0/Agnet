@@ -1,2 +1,5 @@
 build/
 docs/
+
+# project-scoped memory: facts about this workspace, not shared history
+.my_agent/

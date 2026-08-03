@@ -85,6 +85,22 @@ TEST(SystemPromptTest, EmbedsSkillsCatalogWhenPresent)
     EXPECT_NE(std::string::npos, prompt.find("- pdf — Extract text from PDFs"));
 }
 
+// 场景：检查静态基底里关于 remember 的指引。
+// 领域语义：这条指引是端到端手动验证逼出来的，不是设计时想到的。qwen3.5 在流式
+// 模式下遇到「记住我偏好 fish」只会在散文里答应一句然后什么也不做 —— 回合结束，
+// 事实丢失。已有的那条「工具能更可靠地回答问题时就用工具」不覆盖 remember，因为
+// remember 不回答任何问题。加上这条后流式下才会真的调 remember。
+// 锁住它，否则日后重排提示会静默退化成"假装记住"。
+TEST(SystemPromptTest, InstructsTheModelToCallRememberRatherThanAcknowledgeInProse)
+{
+    const std::string prompt = my_agent::prompt::build(my_agent::prompt::Context{
+        .working_directory = "/tmp",
+        .operating_system = "Linux",
+    });
+
+    EXPECT_NE(std::string::npos, prompt.find("remember tool"));
+}
+
 // 场景：采集真实环境。
 // 领域语义：这是提示构建里唯一碰 IO 的部分，与纯粹的 build() 分开正是为了让
 // 上面那些断言不需要文件系统。

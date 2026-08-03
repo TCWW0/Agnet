@@ -1,7 +1,11 @@
 #include "read.hpp"
+#include "memory_tools.hpp"
+#include "my_agent/tool/memory_store.hpp"
 #include "my_agent/tool/tool.hpp"
 
 #include <cmath>
+#include <memory>
+#include <utility>
 #include <filesystem>
 #include <format>
 #include <stdexcept>
@@ -101,10 +105,19 @@ namespace {
     {
         fs::path workspace_root = capture_workspace_root();
 
-        return {
-            calculator(),
-            detail::make_read_tool(std::move(workspace_root))
-        };
+        std::vector<ToolDef> tools;
+        tools.push_back(calculator());
+        tools.push_back(detail::make_read_tool(std::move(workspace_root)));
+
+        // remember / forget 共享一个 store，环境发现只做一次。
+        auto memory_store = std::make_shared<memory::MemoryStore>(
+            memory::discover_roots()
+        );
+        for (ToolDef& tool : detail::make_memory_tools(std::move(memory_store))) {
+            tools.push_back(std::move(tool));
+        }
+
+        return tools;
     }
 
 } // namespace

@@ -22,7 +22,13 @@ constexpr const char* kIdentity =
     "than guessing. Prefer reading a file over speculating about it.\n"
     "- Keep answers short and concrete. Skip preamble.\n"
     "- If a tool call is rejected, respect the decision and continue without "
-    "retrying the same call.\n";
+    "retrying the same call.\n"
+    // 没有这一条，模型会在散文里"答应"记住然后什么也不做 —— 回合结束，事实丢失。
+    // 上面那条指引只覆盖"工具能更可靠地回答问题"的情况，而 remember 不回答任何
+    // 问题，所以要单独说明。
+    "- When the user states a durable preference or fact about themselves or "
+    "this project, call the remember tool to store it. Acknowledging it in prose "
+    "is not enough; that is forgotten when the conversation ends.\n";
 
 std::string detect_os()
 {

@@ -51,6 +51,8 @@ add_library(
     my_agent_tools
     src/tool/read.cpp
     src/tool/registry.cpp
+    src/tool/memory_store.cpp
+    src/tool/memory_tools.cpp
 )
 
 target_include_directories(
@@ -276,6 +278,21 @@ target_link_libraries(
 gtest_discover_tests(
     profile_test
     TEST_PREFIX "profile."
+)
+
+add_executable(
+    memory_store_test
+    tests/memory_store_test.cpp
+)
+target_link_libraries(
+    memory_store_test
+    PRIVATE
+        my_agent_tools
+        GTest::gtest_main
+)
+gtest_discover_tests(
+    memory_store_test
+    TEST_PREFIX "memory_store."
 )
 
 add_executable(
