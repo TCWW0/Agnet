@@ -119,6 +119,11 @@ bool TerminalDriver::is_tty() const noexcept
     return is_tty_;
 }
 
+int TerminalDriver::input_fd() const noexcept
+{
+    return input_fd_;
+}
+
 bool TerminalDriver::render(const Frame& frame) noexcept
 {
     // 一次 write 写完整帧。分多次写会让终端有机会在中间刷新，出现半帧画面（撕裂）。

@@ -56,6 +56,11 @@ public:
     [[nodiscard]]
     Size size() const noexcept;
 
+    // 键盘所在的 fd，供调用方放进 poll 集合。必须由驱动给出而不是让循环假定
+    // STDIN_FILENO —— 假定会让驱动持有的 fd 被忽略，测试也无从在 pty 上验证。
+    [[nodiscard]]
+    int input_fd() const noexcept;
+
 private:
     int input_fd_;
     int output_fd_;

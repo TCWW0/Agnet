@@ -566,6 +566,50 @@ gtest_discover_tests(
     TEST_PREFIX "view."
 )
 
+# TUI 事件循环：apply_key 是纯的（按键 -> UiState 变更 + 可选 Msg），
+# run_ui 才碰 poll 与终端。分开是为了让按键语义脱离 tty 可测。
+add_library(
+    my_agent_ui_loop
+    src/ui/ui_loop.cpp
+)
+
+target_include_directories(
+    my_agent_ui_loop
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_ui_loop
+    PUBLIC cxx_std_23
+)
+
+target_link_libraries(
+    my_agent_ui_loop
+    PUBLIC
+        my_agent_async_runtime
+        my_agent_ui_clock
+        my_agent_ui_input
+        my_agent_ui_terminal
+)
+
+add_executable(
+    ui_loop_test
+    tests/ui_loop_test.cpp
+)
+
+target_link_libraries(
+    ui_loop_test
+    PRIVATE
+        my_agent_ui_loop
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    ui_loop_test
+    TEST_PREFIX "ui_loop."
+)
+
 # TUI 按键解码：字节流 -> 按键。纯状态机，不碰终端，跨 read 边界的 UTF-8 在这里缝合。
 add_library(
     my_agent_ui_input
