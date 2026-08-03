@@ -22,11 +22,24 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
+# cpp-httplib 的 CMake 在找到 OpenSSL 时会以 INTERFACE 方式传播
+# CPPHTTPLIB_OPENSSL_SUPPORT，我们不手动定义该宏。REQUIRE_OPENSSL 让缺少
+# OpenSSL 时直接失败，而不是静默退化成没有 HTTPS 的构建。
+set(HTTPLIB_REQUIRE_OPENSSL ON CACHE INTERNAL "")
+set(HTTPLIB_TEST OFF CACHE INTERNAL "")
+set(HTTPLIB_INSTALL OFF CACHE INTERNAL "")
+FetchContent_Declare(
+    httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.52.0
+    GIT_SHALLOW TRUE
+)
+
 if(MSVC)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 endif()
 
-FetchContent_MakeAvailable(googletest nlohmann_json)
+FetchContent_MakeAvailable(googletest nlohmann_json httplib)
 
 include(GoogleTest)
 
@@ -54,6 +67,46 @@ target_compile_features(
 target_link_libraries(
     my_agent_tools
     PUBLIC nlohmann_json::nlohmann_json
+)
+
+# 传输层：httplib 只在 .cpp 内可见，头文件不泄漏 HTTP 库细节
+add_library(
+    my_agent_http
+    src/http/http_client.cpp
+)
+
+target_include_directories(
+    my_agent_http
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_http
+    PUBLIC cxx_std_23
+)
+
+target_link_libraries(
+    my_agent_http
+    PUBLIC Threads::Threads
+    PRIVATE httplib::httplib
+)
+
+add_executable(
+    http_smoke_test
+    tests/http_smoke_test.cpp
+)
+
+target_link_libraries(
+    http_smoke_test
+    PRIVATE
+        my_agent_http
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    http_smoke_test
+    TEST_PREFIX "http_smoke."
 )
 
 add_library(
