@@ -2,9 +2,10 @@
 #include "my_agent/runtime/async_host.hpp"
 #include "my_agent/runtime/agent.hpp"
 #include "my_agent/runtime/msg.hpp"
+#include "my_agent/tool/tool.hpp"
 #include <memory>
 #include <mutex>
-#include <stdexcept>
+#include <stop_token>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -49,10 +50,17 @@ namespace my_agent{
     };
 
     AsyncHost::AsyncHost(StreamEffect stream,WakeOwner wake_owner)
-        :stream_(std::move(stream)),inbox_(std::make_shared<InboxState>(std::move(wake_owner)))
+        :AsyncHost(std::move(stream),ToolExecEffect{tool::execute},std::move(wake_owner))
     {}
+    
+    AsyncHost::AsyncHost(StreamEffect stream,ToolExecEffect execute_tool,WakeOwner wake_owner)
+        :stream_(std::move(stream)),execute_tool_(execute_tool),inbox_(std::make_shared<InboxState>(std::move(wake_owner)))
+        {}
 
-    AsyncHost::~AsyncHost() = default;
+    AsyncHost::~AsyncHost()
+    {
+        shutdown();
+    }
 
     const Model& AsyncHost::model() const noexcept
     {
@@ -88,14 +96,17 @@ namespace my_agent{
     {
         StreamEffect stream = stream_;
         std::shared_ptr<InboxState> inbox = inbox_;
+        std::stop_token token = stop_source_.get_token();
 
         workers_.emplace_back(
             [
                 stream = std::move(stream),
+                token = token,
                 inbox = std::move(inbox),
                 request = std::move(command.request)
             ]() mutable {
-                EventSink sink = [inbox] (Msg msg){
+                EventSink sink = [inbox,token] (Msg msg){
+                    if (token.stop_requested()) return;
                     inbox -> post(std::move(msg));
                 };
 
@@ -104,11 +115,36 @@ namespace my_agent{
         );
     }
 
-    void AsyncHost::execute_cmd(RunTool)
+    void AsyncHost::execute_cmd(RunTool command)
     {
-        // TODO
-        throw std::logic_error{
-            "AsyncHost does not execute tools in M5 slice 1"
-        };
+        ToolExecEffect execute_tool = execute_tool_;
+        std::shared_ptr<InboxState> inbox = inbox_;
+        std::stop_token token = stop_source_.get_token();
+
+        workers_.emplace_back(
+            [     
+                execute_tool = std::move(execute_tool),
+                inbox = std::move(inbox),
+                token = token,
+                command = std::move(command)
+            ]()mutable {
+                tool::ExecResult result = execute_tool(command.name,command.args);
+
+                if (token.stop_requested()) return;
+                inbox->post(Msg{
+                    ToolExecOutput{
+                        .id = std::move(command.id),
+                        .result = std::move(result),
+                    }
+                });
+            }
+        );
+    }
+
+    void AsyncHost::shutdown()
+    {
+        stop_source_.request_stop();
+        workers_.clear();
+        stop_source_ = std::stop_source{};
     }
 }

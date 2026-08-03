@@ -1,22 +1,26 @@
-
 #pragma once
 
 #include "my_agent/provider/provider.hpp"
 #include "my_agent/runtime/agent.hpp"
 #include "my_agent/runtime/model.hpp"
+#include "my_agent/tool/tool.hpp"
 
 #include <functional>
 #include <memory>
+#include <string_view>
+#include <stop_token>
 #include <thread>
 #include <vector>
 
 namespace my_agent {
 
 using WakeOwner = std::function<void()>;
+using ToolExecEffect = std::function<tool::ExecResult(std::string_view,const nlohmann::json&)>;
 
 class AsyncHost{
 public:
     AsyncHost(StreamEffect stream, WakeOwner wake_owner);
+    AsyncHost(StreamEffect stream, ToolExecEffect execute_tool,WakeOwner wake_owner);
     ~AsyncHost();
 
     AsyncHost(const AsyncHost&) = delete;
@@ -29,6 +33,8 @@ public:
 
     // 交换出当前 Inbox 消息批次，并按 FIFO 顺序交给 Core
     void drain_inbox();
+
+    void shutdown();
 
     [[nodiscard]]
     const Model& model() const noexcept;
@@ -44,11 +50,12 @@ private:
 private:
     Model current_model_{};
 
-    // StreamEffect 本身同步运行，但其运行在后台线程中
     StreamEffect stream_;
+    ToolExecEffect execute_tool_;
 
     std::shared_ptr<InboxState> inbox_;
 
+    std::stop_source stop_source_{};
     std::vector<std::jthread> workers_;
 };
 
