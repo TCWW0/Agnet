@@ -570,6 +570,7 @@ gtest_discover_tests(
 # run_ui 才碰 poll 与终端。分开是为了让按键语义脱离 tty 可测。
 add_library(
     my_agent_ui_loop
+    src/ui/resize_watch.cpp
     src/ui/ui_loop.cpp
 )
 
@@ -591,6 +592,23 @@ target_link_libraries(
         my_agent_ui_clock
         my_agent_ui_input
         my_agent_ui_terminal
+)
+
+add_executable(
+    resize_watch_test
+    tests/resize_watch_test.cpp
+)
+
+target_link_libraries(
+    resize_watch_test
+    PRIVATE
+        my_agent_ui_loop
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    resize_watch_test
+    TEST_PREFIX "resize_watch."
 )
 
 add_executable(

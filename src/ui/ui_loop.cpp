@@ -1,6 +1,7 @@
 #include "my_agent/ui/ui_loop.hpp"
 
 #include "my_agent/ui/repaint_clock.hpp"
+#include "my_agent/ui/resize_watch.hpp"
 
 #include <cerrno>
 #include <chrono>
@@ -87,6 +88,8 @@ bool run_ui(AsyncHost& host, TerminalDriver& terminal)
     UiState ui;
     InputDecoder decoder;
     RepaintClock clock{kFramesPerSecond};
+    // 作用域绑在循环上：处理器随 run_ui 返回而摘掉，不给非 tty 回退路径留残留。
+    ResizeWatch resize;
 
     // 开局先画一帧：否则屏幕在用户敲第一个键之前是空的。
     static_cast<void>(clock.should_paint(RepaintClock::Clock::now()));
@@ -111,30 +114,51 @@ bool run_ui(AsyncHost& host, TerminalDriver& terminal)
             static_cast<void>(terminal.render(view(host.model(), ui, terminal.size())));
         }
 
-        pollfd fds[2] = {
+        // 键盘固定在 [0]。唤醒与窗口变化按可用性依次追加 —— 哨兵（fd 为 -1）
+        // 不能放进 poll，Linux 会把负 fd 当"跳过"，但索引就此错位，于是得记下
+        // 每一路落在哪一格，而不是假定固定下标。
+        pollfd fds[3] = {
             {.fd = keyboard_fd, .events = POLLIN, .revents = 0},
-            {.fd = wake_fd, .events = POLLIN, .revents = 0},
         };
-        // wake_fd < 0 是惰性哨兵（eventfd 与自管道都失败）。此时只 poll stdin，
-        // 并强制一个有限超时，靠轮询 drain_inbox 继续推进而不是永久挂死。
-        const bool has_wake = wake_fd >= 0;
+        int count = 1;
+        const int wake_slot = wake_fd >= 0 ? count : -1;
+        if (wake_slot >= 0) {
+            fds[count++] = {.fd = wake_fd, .events = POLLIN, .revents = 0};
+        }
+        const int resize_slot = resize.fd() >= 0 ? count : -1;
+        if (resize_slot >= 0) {
+            fds[count++] = {.fd = resize.fd(), .events = POLLIN, .revents = 0};
+        }
+
+        const bool has_wake = wake_slot >= 0;
         const std::chrono::milliseconds pending =
             clock.time_until_next_paint(RepaintClock::Clock::now());
+        // 唤醒降级成惰性哨兵时（eventfd 与自管道都失败）没有 fd 可等，只能强制一个
+        // 有限超时，靠轮询 drain_inbox 继续推进而不是永久挂死。
         const int timeout = has_wake ? static_cast<int>(pending.count())
                                      : static_cast<int>(kSentinelPollMs);
 
-        const int ready = ::poll(fds, has_wake ? 2 : 1, timeout);
+        const int ready = ::poll(fds, static_cast<nfds_t>(count), timeout);
         if (ready < 0) {
             if (errno == EINTR) {
-                continue;  // SIGWINCH 等信号打断，重来
+                continue;  // 信号打断（SIGWINCH 不带 SA_RESTART），重来
             }
             break;
+        }
+
+        // 窗口变化：只取走处理器写进管道的字节，重绘交给下一轮开头那一次 ——
+        // view() 每帧都重新读 terminal.size()，被帧率跳过的那一帧由 pending +
+        // poll 超时补上，和别的事件走同一条路。（原本这里额外强制 render 一次，
+        // 实测去掉后重排测试依然通过，说明那次重绘是多余的。）
+        // 字节必须取走：管道是电平的，不读就一直可读，poll 每次立刻返回。
+        if (resize_slot >= 0 && (fds[resize_slot].revents & POLLIN) != 0) {
+            static_cast<void>(resize.drain());
         }
 
         // 唤醒是电平的：不取走那个计数，POLLIN 就一直亮着，poll 每次立刻返回，
         // 循环退化成忙转（实测 eventfd 不清时空转烧 CPU），而且 poll 的超时从此
         // 失效 —— 帧率补画那条路径被永久短路。0ms 只清信号、不阻塞。
-        if (has_wake && (fds[1].revents & POLLIN) != 0) {
+        if (wake_slot >= 0 && (fds[wake_slot].revents & POLLIN) != 0) {
             static_cast<void>(host.wait_wake(std::chrono::milliseconds{0}));
         }
 

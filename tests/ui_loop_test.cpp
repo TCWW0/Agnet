@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <string>
 #include <thread>
 #include <variant>
@@ -9,6 +10,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pty.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 #include <gtest/gtest.h>
@@ -296,6 +298,103 @@ TEST(UiLoopTest, PaintsTheFinalChunkEvenThoughNoWakeFollowsTheEndOfTheStream)
 
     EXPECT_NE(std::string::npos, seen.find("LASTCHUNK"))
         << "回合结束后不再有唤醒，被帧率跳过的那一帧必须靠 poll 超时补画";
+
+    const char eof = 0x04;
+    static_cast<void>(::write(primary, &eof, 1));
+    ui_thread.join();
+    host.shutdown();
+
+    ::close(replica);
+    ::close(primary);
+}
+
+// 场景：拖动窗口改变终端宽度，不碰键盘。
+// 领域语义：折行宽度来自终端，宽度变了屏幕上的每一行都算错了 —— 变窄时文字被
+// 截掉，变宽时留着一堆无用的换行。此时**没有任何键盘或后台事件**，poll 正阻塞着，
+// 所以必须由 SIGWINCH 自己把循环叫醒。实测过当前实现：TIOCSWINSZ 之后 pty 上
+// 一个字节都没有，屏幕一直停在旧宽度，直到用户碰巧按了别的键才刷新。
+// Red 原因：仓库尚未安装 SIGWINCH 处理器（默认是忽略），循环收不到通知。
+TEST(UiLoopTest, ReflowsOnTerminalResizeWithoutWaitingForAKeypress)
+{
+    int primary = -1;
+    int replica = -1;
+    winsize initial{.ws_row = 24, .ws_col = 80, .ws_xpixel = 0, .ws_ypixel = 0};
+    if (::openpty(&primary, &replica, nullptr, nullptr, &initial) != 0) {
+        GTEST_SKIP() << "openpty unavailable in this environment";
+    }
+
+    // 40 个 A：80 列时一行放得下，20 列时必须折成多行。宽度是否被重新读取，
+    // 看的就是屏幕上一行到底有多少个 A。
+    const std::string wide_text(40, 'A');
+    my_agent::AsyncHost host{[wide_text](my_agent::Request, my_agent::EventSink sink) {
+        sink(my_agent::Msg{my_agent::StreamTextDelta{.text = wide_text}});
+        sink(my_agent::Msg{my_agent::StreamFinished{}});
+    }};
+
+    std::thread ui_thread{[&host, replica] {
+        my_agent::ui::TerminalDriver terminal{replica, replica};
+        static_cast<void>(my_agent::ui::run_ui(host, terminal));
+    }};
+
+    std::string seen;
+    const auto ready_by = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    while (std::chrono::steady_clock::now() < ready_by
+           && seen.find("\x1b[?1049h") == std::string::npos) {
+        pollfd probe{.fd = primary, .events = POLLIN, .revents = 0};
+        if (::poll(&probe, 1, 200) > 0) {
+            char buffer[4096];
+            const ssize_t count = ::read(primary, buffer, sizeof(buffer));
+            if (count > 0) {
+                seen.append(buffer, static_cast<std::size_t>(count));
+            }
+        }
+    }
+    ASSERT_NE(std::string::npos, seen.find("\x1b[?1049h")) << "驱动没能进入全屏";
+
+    // 先确认 80 列下整段在一行里 —— 否则后面「变窄了」的断言无从对比。
+    const std::string typed = "hi\r";
+    ASSERT_EQ(static_cast<ssize_t>(typed.size()),
+              ::write(primary, typed.data(), typed.size()));
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    while (std::chrono::steady_clock::now() < until
+           && seen.find(wide_text) == std::string::npos) {
+        pollfd probe{.fd = primary, .events = POLLIN, .revents = 0};
+        if (::poll(&probe, 1, 200) > 0) {
+            char buffer[4096];
+            const ssize_t count = ::read(primary, buffer, sizeof(buffer));
+            if (count > 0) {
+                seen.append(buffer, static_cast<std::size_t>(count));
+            }
+        }
+    }
+    ASSERT_NE(std::string::npos, seen.find(wide_text)) << "80 列下这段本该在一行里";
+
+    // 变窄，然后只发 SIGWINCH —— 不碰键盘。内核只把这个信号发给 pty 的前台进程组，
+    // 测试进程不在其中，所以由测试自己 raise：要证明的是「信号到达后屏幕重排」，
+    // 谁投递的信号不属于这条不变量。
+    winsize narrow{.ws_row = 24, .ws_col = 20, .ws_xpixel = 0, .ws_ypixel = 0};
+    ASSERT_EQ(0, ::ioctl(primary, TIOCSWINSZ, &narrow));
+    std::string after;
+    ASSERT_EQ(0, ::raise(SIGWINCH));
+
+    const std::string narrow_line(18, 'A');  // 20 列减去 2 列发言人前缀
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    while (std::chrono::steady_clock::now() < deadline
+           && after.find(narrow_line) == std::string::npos) {
+        pollfd probe{.fd = primary, .events = POLLIN, .revents = 0};
+        if (::poll(&probe, 1, 200) > 0) {
+            char buffer[4096];
+            const ssize_t count = ::read(primary, buffer, sizeof(buffer));
+            if (count > 0) {
+                after.append(buffer, static_cast<std::size_t>(count));
+            }
+        }
+    }
+
+    EXPECT_NE(std::string::npos, after.find(narrow_line))
+        << "变窄后必须按新宽度重排，而不是等到下一次按键";
+    EXPECT_EQ(std::string::npos, after.find(wide_text))
+        << "旧宽度的整行不该再出现在重排后的帧里";
 
     const char eof = 0x04;
     static_cast<void>(::write(primary, &eof, 1));
