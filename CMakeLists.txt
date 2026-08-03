@@ -314,6 +314,9 @@ gtest_discover_tests(
 add_library(
     my_agent_provider
     src/provider/ollama.cpp
+    src/provider/sse.cpp
+    src/provider/anthropic.cpp
+    src/provider/openai.cpp
 )
 
 target_include_directories(
@@ -349,6 +352,57 @@ target_link_libraries(
 gtest_discover_tests(
     ollama_transport_test
     TEST_PREFIX "ollama_transport."
+)
+
+add_executable(
+    sse_transport_test
+    tests/sse_transport_test.cpp
+)
+
+target_link_libraries(
+    sse_transport_test
+    PRIVATE
+        my_agent_provider
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    sse_transport_test
+    TEST_PREFIX "sse_transport."
+)
+
+add_executable(
+    anthropic_transport_test
+    tests/anthropic_transport_test.cpp
+)
+
+target_link_libraries(
+    anthropic_transport_test
+    PRIVATE
+        my_agent_provider
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    anthropic_transport_test
+    TEST_PREFIX "anthropic_transport."
+)
+
+add_executable(
+    openai_transport_test
+    tests/openai_transport_test.cpp
+)
+
+target_link_libraries(
+    openai_transport_test
+    PRIVATE
+        my_agent_provider
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    openai_transport_test
+    TEST_PREFIX "openai_transport."
 )
 
 # 系统提示构建器：build() 保持纯，只有 capture_environment 碰 IO
