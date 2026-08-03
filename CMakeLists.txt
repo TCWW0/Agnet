@@ -507,6 +507,47 @@ gtest_discover_tests(
     TEST_PREFIX "text_width."
 )
 
+# TUI 视图投影：Model -> Frame。纯函数，不碰终端，可脱离 tty 单测。
+add_library(
+    my_agent_ui_view
+    src/ui/view.cpp
+)
+
+target_include_directories(
+    my_agent_ui_view
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_ui_view
+    PUBLIC cxx_std_23
+)
+
+target_link_libraries(
+    my_agent_ui_view
+    PUBLIC
+        my_agent_ui_text
+        my_agent_core
+)
+
+add_executable(
+    view_test
+    tests/view_test.cpp
+)
+
+target_link_libraries(
+    view_test
+    PRIVATE
+        my_agent_ui_view
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    view_test
+    TEST_PREFIX "view."
+)
+
 # 阶段一演示终点：最小 REPL。只碰 dispatch / run_until_quiescent / model
 add_executable(
     my_agent_repl
