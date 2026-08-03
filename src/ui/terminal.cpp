@@ -1,0 +1,198 @@
+#include "my_agent/ui/terminal.hpp"
+
+#include <atomic>
+#include <cerrno>
+#include <csignal>
+#include <cstddef>
+
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+namespace my_agent::ui {
+
+namespace {
+
+// 循环写完，EINTR 当重试而不是失败。返回是否全部写出 —— 调用方据此决定是否
+// commit 已渲染状态，谎报成功会让后续差分建立在假前提上。
+[[nodiscard]]
+bool write_all(int fd, std::string_view bytes) noexcept
+{
+    while (!bytes.empty()) {
+        const ssize_t written = ::write(fd, bytes.data(), bytes.size());
+        if (written > 0) {
+            bytes.remove_prefix(static_cast<std::size_t>(written));
+            continue;
+        }
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+// 崩溃还原用的全局状态。信号处理器不能访问对象（this 可能已损坏）、不能加锁
+// （可能已持有）、不能分配（可能正崩在 malloc 里），所以只能靠这几个平坦的全局量。
+std::atomic<bool> g_crash_armed{false};
+std::atomic<int> g_crash_fd{-1};
+std::atomic<int> g_crash_out_fd{-1};
+// 非 atomic：termios 是聚合体，没有无锁的原子版本。armed 标志的 release/acquire
+// 保证处理器读到它时内容已写完，而它在 armed 之后不再改动。
+termios g_crash_termios{};
+
+extern "C" void crash_signal_handler(int signal_number)
+{
+    TerminalDriver::restore_on_crash();
+    // 重新发一次。SA_RESETHAND 已把处理器复位成默认动作，所以这次会真正终止进程，
+    // 留下正确的退出状态和 core —— 而不是让崩溃被静默吞掉。
+    std::raise(signal_number);
+}
+
+}  // namespace
+
+// 1049 是「切备用屏并存光标位置」的组合，比老的 47 + 独立存光标少一次往返。
+// 备用屏而非 inline：inline 要精确记账滚出屏幕的物理行数，那是正确性问题；
+// 备用屏的代价（退出后历史消失）只是体验问题。
+std::string_view enter_bytes() noexcept
+{
+    return "\x1b[?1049h\x1b[?25l";
+}
+
+// 精确逆转 enter_bytes，且顺序相反。先显光标再切回主屏 —— 反过来可能让主屏
+// 留着隐藏的光标，用户的 shell 从此看不见自己在打什么。
+std::string_view leave_bytes() noexcept
+{
+    return "\x1b[?25h\x1b[?1049l";
+}
+
+TerminalDriver::TerminalDriver(int input_fd, int output_fd)
+    : input_fd_{input_fd},
+      output_fd_{output_fd},
+      // 两端都必须是 tty。只有输出是 tty 时（`cat file | my_agent`）改不了输入的
+      // termios，读键盘的那套逻辑无从工作，只能整体回退。
+      is_tty_{::isatty(input_fd) == 1 && ::isatty(output_fd) == 1}
+{
+    if (!is_tty_) {
+        return;
+    }
+    if (::tcgetattr(input_fd_, &saved_termios_) != 0) {
+        is_tty_ = false;  // 拿不到原始状态就不敢改 —— 改了就还不回去
+        return;
+    }
+
+    termios raw = saved_termios_;
+    // 关回显与行缓冲：逐键处理的前提。关 ISIG 让 Ctrl-C 作为字节到达，
+    // 由前端决定含义（中断请求而不是杀进程），否则备用屏来不及还原。
+    raw.c_lflag &= static_cast<tcflag_t>(~(ECHO | ICANON | ISIG | IEXTEN));
+    // 关 IXON 让 Ctrl-S/Ctrl-Q 不被终端吞掉；关 ICRNL 让回车保持 \r。
+    raw.c_iflag &= static_cast<tcflag_t>(~(IXON | ICRNL | INLCR | ISTRIP));
+    // 关 OPOST：输出不再自动 \n -> \r\n，这正是行定位必须显式 CUP 的原因。
+    raw.c_oflag &= static_cast<tcflag_t>(~OPOST);
+    // VMIN=0/VTIME=0 让 read 立即返回 —— 阻塞由 poll 负责，read 只负责取走
+    // 已经就绪的字节。VMIN=1 会让 read 在 poll 之后再次阻塞，UI 线程卡死。
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+    if (::tcsetattr(input_fd_, TCSAFLUSH, &raw) != 0) {
+        is_tty_ = false;
+        return;
+    }
+
+    // 写不出去也继续：termios 已经设好，能读键盘。屏幕的事下一帧 render 会再试，
+    // 而它的返回值调用方看得到 —— 这里没人能处理。
+    static_cast<void>(write_all(output_fd_, enter_bytes()));
+}
+
+TerminalDriver::~TerminalDriver()
+{
+    if (!is_tty_) {
+        return;
+    }
+    // 顺序：先还原屏幕再还原 termios。反过来的话，还原 termios 之后 OPOST 又开着，
+    // 后面那串转义序列会被终端加工（\n -> \r\n），可能被截断。
+    static_cast<void>(write_all(output_fd_, leave_bytes()));
+    // 即使屏幕没还原成功也要还 termios：不回显的 shell 比留在备用屏上更难恢复。
+    ::tcsetattr(input_fd_, TCSAFLUSH, &saved_termios_);
+}
+
+bool TerminalDriver::is_tty() const noexcept
+{
+    return is_tty_;
+}
+
+bool TerminalDriver::render(const Frame& frame) noexcept
+{
+    // 一次 write 写完整帧。分多次写会让终端有机会在中间刷新，出现半帧画面（撕裂）。
+    const std::string bytes = frame_bytes(frame);
+    return write_all(output_fd_, bytes);
+}
+
+Size TerminalDriver::size() const noexcept
+{
+    winsize window{};
+    if (::ioctl(output_fd_, TIOCGWINSZ, &window) == 0 && window.ws_col > 0
+        && window.ws_row > 0) {
+        return Size{
+            .columns = static_cast<int>(window.ws_col),
+            .rows = static_cast<int>(window.ws_row),
+        };
+    }
+    // 管道没有尺寸，但折行仍然需要一个宽度 —— 0 列会让 wrap 什么都不吐，界面全空。
+    return Size{.columns = 80, .rows = 24};
+}
+
+void TerminalDriver::install_crash_handler() noexcept
+{
+    if (!is_tty_) {
+        return;
+    }
+    // 信号处理器只能碰这几个 volatile 全局量：它不能加锁（可能已持有），
+    // 不能分配（可能崩在 malloc 里），也不能访问对象（this 可能已损坏）。
+    g_crash_fd.store(input_fd_, std::memory_order_relaxed);
+    g_crash_out_fd.store(output_fd_, std::memory_order_relaxed);
+    g_crash_termios = saved_termios_;
+    g_crash_armed.store(true, std::memory_order_release);
+
+    struct sigaction action{};
+    action.sa_handler = &crash_signal_handler;
+    // SA_RESETHAND：处理器只跑一次，之后恢复默认。还原完再重发信号时才会
+    // 真正终止进程并留下正确的退出状态/core，而不是重入处理器死循环。
+    action.sa_flags = SA_RESETHAND;
+    ::sigemptyset(&action.sa_mask);
+    for (const int signal_number : {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT}) {
+        ::sigaction(signal_number, &action, nullptr);
+    }
+}
+
+void TerminalDriver::restore_on_crash() noexcept
+{
+    if (!g_crash_armed.load(std::memory_order_acquire)) {
+        return;
+    }
+    const std::string_view leave = leave_bytes();
+    // 直接 write 而不走 write_all：短写时宁可少写几个字节，也不要在崩溃路径上
+    // 循环。write 与 tcsetattr 都是 async-signal-safe。
+    ::write(g_crash_out_fd.load(std::memory_order_relaxed), leave.data(), leave.size());
+    ::tcsetattr(
+        g_crash_fd.load(std::memory_order_relaxed), TCSAFLUSH, &g_crash_termios
+    );
+}
+
+std::string frame_bytes(const Frame& frame)
+{
+    std::string bytes;
+    int row = 1;  // CUP 的行列都是 1-based
+    for (const StyledLine& line : frame.lines) {
+        // 显式定位而不是靠 "\n"：raw mode 下没有 ONLCR，"\n" 只下移不回列，
+        // 界面会呈阶梯状。
+        bytes += "\x1b[" + std::to_string(row) + ";1H";
+        bytes += line.text;
+        bytes += "\x1b[K";  // EL：擦到行尾，抹掉上一帧更长的行留下的尾巴
+        ++row;
+    }
+    // ED(0)：擦到屏幕底部。EL 管横向残留，这条管纵向 —— 这一帧比上一帧短时，
+    // 多出来的旧行（比如已消失的审批提示）必须清掉。
+    bytes += "\x1b[J";
+    return bytes;
+}
+
+}  // namespace my_agent::ui

@@ -548,6 +548,47 @@ gtest_discover_tests(
     TEST_PREFIX "view."
 )
 
+# TUI 终端驱动：唯一写字节、唯一改 termios 的地方。字节生成与 tty 操作分开，
+# 前者可脱离终端单测，后者在非 tty 环境下降级。
+add_library(
+    my_agent_ui_terminal
+    src/ui/terminal.cpp
+)
+
+target_include_directories(
+    my_agent_ui_terminal
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_ui_terminal
+    PUBLIC cxx_std_23
+)
+
+target_link_libraries(
+    my_agent_ui_terminal
+    PUBLIC
+        my_agent_ui_view
+)
+
+add_executable(
+    terminal_test
+    tests/terminal_test.cpp
+)
+
+target_link_libraries(
+    terminal_test
+    PRIVATE
+        my_agent_ui_terminal
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    terminal_test
+    TEST_PREFIX "terminal."
+)
+
 # 阶段一演示终点：最小 REPL。只碰 dispatch / run_until_quiescent / model
 add_executable(
     my_agent_repl
