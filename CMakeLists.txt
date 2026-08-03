@@ -193,6 +193,7 @@ gtest_discover_tests(
 add_library(
     my_agent_async_runtime
     src/runtime/async_host.cpp
+    src/runtime/wake_signal.cpp
     src/runtime/work_pool.cpp
 )
 
@@ -325,6 +326,23 @@ target_link_libraries(
 gtest_discover_tests(
     read_tool_test
     TEST_PREFIX "read_tool."
+)
+
+add_executable(
+    wake_signal_test
+    tests/wake_signal_test.cpp
+)
+
+target_link_libraries(
+    wake_signal_test
+    PRIVATE
+        my_agent_async_runtime
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    wake_signal_test
+    TEST_PREFIX "wake_signal."
 )
 
 add_executable(

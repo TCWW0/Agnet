@@ -1,8 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <condition_variable>
-#include <mutex>
 
 namespace my_agent {
 
@@ -13,45 +11,37 @@ namespace my_agent {
 // N 条消息只需要一次唤醒。同样重要的是标志会保持置起：signal() 发生在 owner
 // 进入 wait() 之前时不会丢失唤醒，否则会永久挂死。
 //
-// 用 mutex + condition_variable 而不是 binary_semaphore：后者在已置起时再
-// release() 会突破 max()==1 从而进入未定义行为，而"已经置起时再 signal"恰好
-// 是这里的常态。未来换成 eventfd 只需要替换这个类。
+// 底层是 eventfd（不可用时退回自管道），因为 mutex + condition_variable **无法被
+// poll** —— 而 TUI 必须在等唤醒的同时等键盘和 SIGWINCH。fd() 让这三者进同一个
+// poll 集合。eventfd 的计数器天然满足上面两条语义：非零即可读（电平），
+// 一次读走全部计数（合并）。
 class WakeSignal {
 public:
+    WakeSignal();
+    ~WakeSignal();
+
+    WakeSignal(const WakeSignal&) = delete;
+    WakeSignal& operator=(const WakeSignal&) = delete;
+
     // 多生产者安全。
-    void signal()
-    {
-        {
-            const std::lock_guard<std::mutex> lock{mutex_};
-            signaled_ = true;
-        }
-        cv_.notify_all();
-    }
+    void signal();
 
     // owner thread only。返回时标志已被清除。
-    void wait()
-    {
-        std::unique_lock<std::mutex> lock{mutex_};
-        cv_.wait(lock, [this] { return signaled_; });
-        signaled_ = false;
-    }
+    void wait();
 
     // owner thread only。超时返回 false，且不清除标志。
     [[nodiscard]]
-    bool wait_for(std::chrono::milliseconds timeout)
-    {
-        std::unique_lock<std::mutex> lock{mutex_};
-        if (!cv_.wait_for(lock, timeout, [this] { return signaled_; })) {
-            return false;
-        }
-        signaled_ = false;
-        return true;
-    }
+    bool wait_for(std::chrono::milliseconds timeout);
+
+    // 可放进 poll 集合的读端。signal() 后可读，wait() 消费后不再可读。
+    // 构造失败时返回 -1（惰性哨兵），调用方应退回超时轮询而不是拒绝启动。
+    [[nodiscard]]
+    int fd() const noexcept;
 
 private:
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    bool signaled_{false};
+    // eventfd 时两者相同；自管道回退时分别是读端与写端。
+    int read_fd_{-1};
+    int write_fd_{-1};
 };
 
 }  // namespace my_agent
