@@ -11,6 +11,7 @@
 #include <utility>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 namespace my_agent::tool::detail{
     namespace {
@@ -32,7 +33,11 @@ namespace my_agent::tool::detail{
         }
 
         [[nodiscard]]
-        std::expected<fs::path, ToolError> resolve_read_path(const fs::path& workspace_root,std::string_view raw_path)
+        std::expected<fs::path, ToolError> resolve_read_path(
+            const fs::path& workspace_root,
+            const std::vector<fs::path>& allowed_roots,
+            std::string_view raw_path
+        )
         {
             fs::path requested{raw_path};
 
@@ -54,21 +59,34 @@ namespace my_agent::tool::detail{
                 });
             }
 
-            if (!is_within_workspace(workspace_root, target)){
-                return std::unexpected(ToolError{
-                    .kind = ErrorKind::OutOfWorkspace,
-                    .message =
-                        "read refused path outside workspace: "
-                        +target.string()
-                        +" (workspace: "
-                        + workspace_root.string()
-                        +")",
-                });
+            if (is_within_workspace(workspace_root, target)) {
+                return target;
             }
-            return target;
+
+            // 允许列表只在这里参与判断，且只对读生效。skill 目录常在 $HOME 下，
+            // 完全在工作区之外，但 SKILL.md 正文引用的脚本必须读得到（Tier3）。
+            for (const fs::path& allowed : allowed_roots) {
+                if (is_within_workspace(allowed, target)) {
+                    return target;
+                }
+            }
+
+            return std::unexpected(ToolError{
+                .kind = ErrorKind::OutOfWorkspace,
+                .message =
+                    "read refused path outside workspace: "
+                    +target.string()
+                    +" (workspace: "
+                    + workspace_root.string()
+                    +")",
+            });
         }
 
-        ExecResult execute_read (const fs::path& workspace_root,const nlohmann::json& args)
+        ExecResult execute_read (
+            const fs::path& workspace_root,
+            const std::vector<fs::path>& allowed_roots,
+            const nlohmann::json& args
+        )
         {
             if (!args.is_object()
                 || !args.contains("path")
@@ -87,7 +105,8 @@ namespace my_agent::tool::detail{
                 });
             }
 
-            const auto path = resolve_read_path(workspace_root,raw_path);
+            const auto path =
+                resolve_read_path(workspace_root, allowed_roots, raw_path);
             if (!path){
                 return std::unexpected(path.error());
             }
@@ -108,11 +127,16 @@ namespace my_agent::tool::detail{
         }
     }   //namespace
 
-    ToolDef make_read_tool(std::filesystem::path workspace_root)
+    ToolDef make_read_tool(
+        std::filesystem::path workspace_root,
+        std::vector<std::filesystem::path> allowed_roots
+    )
     {
         return ToolDef{
             .name = "read",
-            .description = "Read a text file from the current workspace",
+            .description =
+                "Read a text file from the current workspace, or from the "
+                "directory of an activated skill.",
             .input_schema = nlohmann::json{
                 {"type","object"},
                 {"properties",nlohmann::json{
@@ -125,8 +149,11 @@ namespace my_agent::tool::detail{
                 {"additionalProperties",false},
             },
             .effects = {Effect::ReadFs},
-            .execute = [workspace_root = std::move(workspace_root)](const nlohmann::json& args){
-                return execute_read(workspace_root, args);
+            .execute = [
+                workspace_root = std::move(workspace_root),
+                allowed_roots = std::move(allowed_roots)
+            ](const nlohmann::json& args){
+                return execute_read(workspace_root, allowed_roots, args);
             },
         };
     }

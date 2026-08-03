@@ -3,6 +3,7 @@
 #include "my_agent/provider/ollama.hpp"
 #include "my_agent/runtime/async_host.hpp"
 #include "my_agent/tool/memory_store.hpp"
+#include "my_agent/tool/skills.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -101,6 +102,15 @@ std::vector<std::string> load_memories()
     return lines;
 }
 
+// Tier1：只有名字和一句描述进提示。正文等模型调 skill 工具才加载，资源文件更是
+// 只列不读 —— 全部塞进提示，token 会随 skill 数量线性增长，而一个回合真正用得上
+// 的通常只有一份。
+std::string load_skills_catalog()
+{
+    namespace skills = my_agent::tool::skills;
+    return skills::SkillEngine{skills::discover_roots()}.catalog_block();
+}
+
 void report_errors(const my_agent::Model& model)
 {
     if (model.thread.messages.empty()) {
@@ -137,6 +147,7 @@ int main()
     host_runtime.set_system_prompt_provider([] {
         my_agent::prompt::Context context = my_agent::prompt::capture_environment();
         context.memories = load_memories();
+        context.skills_catalog = load_skills_catalog();
         return my_agent::prompt::build(context);
     });
 

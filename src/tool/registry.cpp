@@ -1,6 +1,8 @@
 #include "read.hpp"
 #include "memory_tools.hpp"
+#include "skill_tools.hpp"
 #include "my_agent/tool/memory_store.hpp"
+#include "my_agent/tool/skills.hpp"
 #include "my_agent/tool/tool.hpp"
 
 #include <cmath>
@@ -105,15 +107,28 @@ namespace {
     {
         fs::path workspace_root = capture_workspace_root();
 
+        // engine 要在 read 之前建好：read 的允许列表需要 skill 目录，否则装在
+        // $HOME 下的 skill 引用的资源文件会被 workspace 边界拒掉（Tier3）。
+        auto skill_engine = std::make_shared<skills::SkillEngine>(
+            skills::discover_roots()
+        );
+
         std::vector<ToolDef> tools;
         tools.push_back(calculator());
-        tools.push_back(detail::make_read_tool(std::move(workspace_root)));
+        tools.push_back(detail::make_read_tool(
+            std::move(workspace_root),
+            skill_engine->directories()
+        ));
 
         // remember / forget 共享一个 store，环境发现只做一次。
         auto memory_store = std::make_shared<memory::MemoryStore>(
             memory::discover_roots()
         );
         for (ToolDef& tool : detail::make_memory_tools(std::move(memory_store))) {
+            tools.push_back(std::move(tool));
+        }
+
+        for (ToolDef& tool : detail::make_skill_tools(std::move(skill_engine))) {
             tools.push_back(std::move(tool));
         }
 

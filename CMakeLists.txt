@@ -53,6 +53,8 @@ add_library(
     src/tool/registry.cpp
     src/tool/memory_store.cpp
     src/tool/memory_tools.cpp
+    src/tool/skills.cpp
+    src/tool/skill_tools.cpp
 )
 
 target_include_directories(
@@ -293,6 +295,21 @@ target_link_libraries(
 gtest_discover_tests(
     memory_store_test
     TEST_PREFIX "memory_store."
+)
+
+add_executable(
+    skills_test
+    tests/skills_test.cpp
+)
+target_link_libraries(
+    skills_test
+    PRIVATE
+        my_agent_tools
+        GTest::gtest_main
+)
+gtest_discover_tests(
+    skills_test
+    TEST_PREFIX "skills."
 )
 
 add_executable(
