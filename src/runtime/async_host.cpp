@@ -60,6 +60,17 @@ namespace my_agent{
          inbox_(std::make_shared<InboxState>(wake_))
         {}
 
+    void AsyncHost::shutdown()
+    {
+        // Owner-thread only，且是终态：stop 之后不再重置。重置会让仍持有旧
+        // token 的 worker 变成孤儿，永远看不到停止请求。
+        //
+        // 不需要 signal 唤醒阻塞中的 owner：shutdown 与 run_until_quiescent
+        // 同属 owner thread，二者不可能同时在跑，所以 owner 绝不会在 stop 之后
+        // 还阻塞在 wait() 上。循环入口的 stop 检查已经足够。
+        pool_.request_stop();
+    }
+
     AsyncHost::~AsyncHost()
     {
         shutdown();
@@ -97,7 +108,7 @@ namespace my_agent{
     void AsyncHost::run_until_quiescent()
     {
         while (true) {
-            if (stop_source_.stop_requested()) {
+            if (pool_.stop_token().stop_requested()) {
                 return;
             }
 
@@ -133,9 +144,11 @@ namespace my_agent{
     {
         StreamEffect stream = stream_;
         std::shared_ptr<InboxState> inbox = inbox_;
-        std::stop_token token = stop_source_.get_token();
+        std::stop_token token = pool_.stop_token();
 
-        workers_.emplace_back(
+        // 共享池：Provider 流是长时任务，但它必须与短工具调用共享一个有界的池，
+        // 否则一条流就能把线程数无界地拉起来。
+        pool_.task(
             [
                 stream = std::move(stream),
                 token = token,
@@ -179,9 +192,12 @@ namespace my_agent{
     {
         ToolExecEffect execute_tool = execute_tool_;
         std::shared_ptr<InboxState> inbox = inbox_;
-        std::stop_token token = stop_source_.get_token();
+        std::stop_token token = pool_.stop_token();
 
-        workers_.emplace_back(
+        // 隔离通道：工具可能永久卡在阻塞 syscall 上（死掉的挂载点、僵住的子
+        // 进程）。放在共享池里会永久占掉一个槽位并饿死后续任务。捕获的 inbox
+        // 是 shared_ptr，所以即使 host 已析构，detached 线程也能安全收尾。
+        pool_.task_isolated(
             [
                 execute_tool = std::move(execute_tool),
                 inbox = std::move(inbox),
@@ -217,11 +233,4 @@ namespace my_agent{
         );
     }
 
-    void AsyncHost::shutdown()
-    {
-        // Owner-thread only，且是终态：stop 之后不再重置 stop_source_。重置会
-        // 让仍持有旧 token 的 worker 变成孤儿，永远看不到停止请求。
-        stop_source_.request_stop();
-        workers_.clear();
-    }
 }

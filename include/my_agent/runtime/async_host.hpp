@@ -4,15 +4,13 @@
 #include "my_agent/runtime/agent.hpp"
 #include "my_agent/runtime/model.hpp"
 #include "my_agent/runtime/wake_signal.hpp"
+#include "my_agent/runtime/work_pool.hpp"
 #include "my_agent/tool/tool.hpp"
 
 #include <chrono>
 #include <functional>
 #include <memory>
 #include <string_view>
-#include <stop_token>
-#include <thread>
-#include <vector>
 
 namespace my_agent {
 
@@ -66,13 +64,14 @@ private:
     StreamEffect stream_;
     ToolExecEffect execute_tool_;
 
-    // shared_ptr 而非成员对象：切片 3 的隔离通道会 detach 线程，那些线程可能
-    // 活得比 host 久，共享所有权让它们不会对已析构的 WakeSignal 调 signal()。
+    // shared_ptr 而非成员对象：隔离通道的线程是 detach 的，可能活得比 host 久。
+    // 共享所有权让它们不会对已析构的 WakeSignal / Inbox 动手。
     std::shared_ptr<WakeSignal> wake_;
     std::shared_ptr<InboxState> inbox_;
 
-    std::stop_source stop_source_{};
-    std::vector<std::jthread> workers_;
+    // Provider 流走共享池，工具执行走隔离通道。声明顺序即销毁顺序的逆序：
+    // pool_ 最先析构（join 掉 worker），此时 inbox_/wake_ 仍然有效。
+    WorkPool pool_;
 };
 
 }  // namespace my_agent

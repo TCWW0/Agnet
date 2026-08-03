@@ -189,6 +189,7 @@ gtest_discover_tests(
 add_library(
     my_agent_async_runtime
     src/runtime/async_host.cpp
+    src/runtime/work_pool.cpp
 )
 
 target_include_directories(
@@ -290,4 +291,21 @@ target_link_libraries(
 gtest_discover_tests(
     read_tool_test
     TEST_PREFIX "read_tool."
+)
+
+add_executable(
+    work_pool_test
+    tests/work_pool_test.cpp
+)
+
+target_link_libraries(
+    work_pool_test
+    PRIVATE
+        my_agent_async_runtime
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    work_pool_test
+    TEST_PREFIX "work_pool."
 )
