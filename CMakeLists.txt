@@ -309,3 +309,44 @@ gtest_discover_tests(
     work_pool_test
     TEST_PREFIX "work_pool."
 )
+
+# Provider 传输层：把线上 wire 格式翻译成 Msg
+add_library(
+    my_agent_provider
+    src/provider/ollama.cpp
+)
+
+target_include_directories(
+    my_agent_provider
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_provider
+    PUBLIC cxx_std_23
+)
+
+target_link_libraries(
+    my_agent_provider
+    PUBLIC
+        my_agent_core
+        my_agent_http
+)
+
+add_executable(
+    ollama_transport_test
+    tests/ollama_transport_test.cpp
+)
+
+target_link_libraries(
+    ollama_transport_test
+    PRIVATE
+        my_agent_provider
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    ollama_transport_test
+    TEST_PREFIX "ollama_transport."
+)
