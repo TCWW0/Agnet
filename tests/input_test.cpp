@@ -1,0 +1,102 @@
+#include "my_agent/ui/input.hpp"
+
+#include <string>
+#include <vector>
+
+#include <gtest/gtest.h>
+
+namespace {
+
+// 场景：敲进三个可见字符。
+// 领域语义：raw mode 下 stdin 是裸字节流，前端要的是「按键」。最基本的契约是
+// 可见字符原样成为文本 —— 这是后面所有按键语义的锚点。
+// Red 原因：仓库尚不存在 ui::InputDecoder（编译错误）。
+TEST(InputTest, DecodesPrintableCharactersAsText)
+{
+    my_agent::ui::InputDecoder decoder;
+
+    const std::vector<my_agent::ui::Key> keys = decoder.feed("abc");
+
+    ASSERT_EQ(3u, keys.size());
+    EXPECT_EQ("a", keys[0].text);
+    EXPECT_EQ("c", keys[2].text);
+}
+
+// 场景：一个汉字被 read 切成两半。
+// 领域语义：这是本项目最会真实发生的输入 bug —— 中文占 3 字节，而 read 只保证返回
+// 「已就绪的字节」，不保证在字符边界上切。残缺序列必须留到下一次 feed 缝合。
+// 逐字节当作按键的实现会把「你」吐成 3 个乱码字符，插进输入行就再也删不干净。
+// Red 原因：当前实现逐字节生成按键，会得到 3 个而不是 1 个。
+TEST(InputTest, StitchesAMultibyteCharacterSplitAcrossTwoReads)
+{
+    my_agent::ui::InputDecoder decoder;
+    const std::string ni = "你";  // E4 BD A0
+    ASSERT_EQ(3u, ni.size());
+
+    const std::vector<my_agent::ui::Key> first = decoder.feed(ni.substr(0, 2));
+    EXPECT_TRUE(first.empty()) << "残缺序列不能吐出来";
+
+    const std::vector<my_agent::ui::Key> second = decoder.feed(ni.substr(2));
+    ASSERT_EQ(1u, second.size());
+    EXPECT_EQ("你", second[0].text);
+}
+
+// 场景：回车、退格、Ctrl-C、Ctrl-D。
+// 领域语义：这四个是控制字节而不是文本 —— 把它们当文本会往输入行里插入不可见字符。
+// 回车在 raw mode 下是 \r 而不是 \n（关掉了 ICRNL），认错会让回车毫无反应，
+// 这是 raw mode 下最典型的失误。Ctrl-C 必须作为按键到达而不是杀进程，
+// 否则备用屏来不及还原，用户的终端留在 raw mode。
+// Red 原因：当前实现把所有字节都当文本。
+TEST(InputTest, DecodesControlBytesAsKeysRatherThanText)
+{
+    my_agent::ui::InputDecoder decoder;
+
+    // \r 而非 \n：raw mode 关掉了 ICRNL，回车原样是 \r。
+    const std::vector<my_agent::ui::Key> keys = decoder.feed("\r\x7f\x03\x04");
+
+    ASSERT_EQ(4u, keys.size());
+    EXPECT_EQ(my_agent::ui::Key::Kind::Enter, keys[0].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::Backspace, keys[1].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::Interrupt, keys[2].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::Eof, keys[3].kind);
+    for (const my_agent::ui::Key& key : keys) {
+        EXPECT_TRUE(key.text.empty()) << "控制键不该带文本";
+    }
+}
+
+// 场景：方向键等未支持的转义序列。
+// 领域语义：本切片不支持方向键，但 stdin 里照样会出现 ESC [ A。原样当文本会把
+// "\x1b[A" 三个可见字符插进输入行，用户看到的是 "^[[A" 一样的垃圾。所以未识别的
+// 转义序列必须被**丢弃**而不是当文本 —— 不支持一个功能和显示乱码是两件事。
+// Red 原因：当前实现会把 ESC 和 [ A 都当成文本吐出来。
+TEST(InputTest, DiscardsUnsupportedEscapeSequencesInsteadOfShowingGarbage)
+{
+    my_agent::ui::InputDecoder decoder;
+
+    const std::vector<my_agent::ui::Key> keys = decoder.feed("a\x1b[Ab");
+
+    ASSERT_EQ(2u, keys.size());
+    EXPECT_EQ("a", keys[0].text);
+    EXPECT_EQ("b", keys[1].text);
+}
+
+// 场景：转义序列被 read 切开。
+// 领域语义：和 UTF-8 同一个问题的另一面 —— 转义序列也会跨 read 到达。如果只在
+// 单次 feed 内部识别边界，切开的那半段会被当成文本，用户看到 "[A" 插进输入行。
+// 缓冲必须跨 feed 保持，直到终结符到齐。
+// 这是 characterization 测试：探查现有行为后固定下来，防止日后把缓冲逻辑
+// "简化"成单次 feed 内处理。
+TEST(InputTest, KeepsAnIncompleteEscapeSequenceAcrossReadBoundaries)
+{
+    my_agent::ui::InputDecoder decoder;
+
+    const std::vector<my_agent::ui::Key> first = decoder.feed("a\x1b[");
+    ASSERT_EQ(1u, first.size());
+    EXPECT_EQ("a", first[0].text);  // ESC [ 留在缓冲里，没当成文本
+
+    const std::vector<my_agent::ui::Key> second = decoder.feed("Ab");
+    ASSERT_EQ(1u, second.size());
+    EXPECT_EQ("b", second[0].text);  // 序列到齐后整段丢弃，只剩 b
+}
+
+}  // namespace

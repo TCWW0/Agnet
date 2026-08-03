@@ -129,6 +129,11 @@ namespace my_agent{
         return wake_->wait_for(timeout);
     }
 
+    int AsyncHost::wake_fd() const noexcept
+    {
+        return wake_->fd();
+    }
+
     void AsyncHost::process_msg(Msg msg)
     {
         Step step = update(std::move(current_model_),std::move(msg));

@@ -566,6 +566,80 @@ gtest_discover_tests(
     TEST_PREFIX "view."
 )
 
+# TUI 按键解码：字节流 -> 按键。纯状态机，不碰终端，跨 read 边界的 UTF-8 在这里缝合。
+add_library(
+    my_agent_ui_input
+    src/ui/input.cpp
+)
+
+target_include_directories(
+    my_agent_ui_input
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_ui_input
+    PUBLIC cxx_std_23
+)
+
+target_link_libraries(
+    my_agent_ui_input
+    PUBLIC
+        my_agent_ui_text
+)
+
+add_executable(
+    input_test
+    tests/input_test.cpp
+)
+
+target_link_libraries(
+    input_test
+    PRIVATE
+        my_agent_ui_input
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    input_test
+    TEST_PREFIX "input."
+)
+
+# TUI 帧率合并：纯判定，时间由调用方注入，因此可确定性测试而无需 sleep。
+add_library(
+    my_agent_ui_clock
+    src/ui/repaint_clock.cpp
+)
+
+target_include_directories(
+    my_agent_ui_clock
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_ui_clock
+    PUBLIC cxx_std_23
+)
+
+add_executable(
+    repaint_clock_test
+    tests/repaint_clock_test.cpp
+)
+
+target_link_libraries(
+    repaint_clock_test
+    PRIVATE
+        my_agent_ui_clock
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    repaint_clock_test
+    TEST_PREFIX "repaint_clock."
+)
+
 # TUI 终端驱动：唯一写字节、唯一改 termios 的地方。字节生成与 tty 操作分开，
 # 前者可脱离终端单测，后者在非 tty 环境下降级。
 add_library(

@@ -50,6 +50,13 @@ public:
     [[nodiscard]]
     bool wait_wake(std::chrono::milliseconds timeout);
 
+    // 后台唤醒的可 poll 读端。前端把它和 stdin、SIGWINCH 放进同一个 poll，
+    // 从而在流式输出进行中也能读键盘 —— 这是 run_until_quiescent 做不到的事，
+    // 那个函数在 phase 是 Streaming 时不返回。
+    // 返回 -1 表示唤醒机制降级成惰性哨兵，调用方应改用超时轮询。
+    [[nodiscard]]
+    int wake_fd() const noexcept;
+
     void shutdown();
 
     [[nodiscard]]
