@@ -255,4 +255,52 @@ TEST(ViewTest, KeepsTheInputLineIntactEvenWhenTheTerminalIsTooNarrow)
     EXPECT_EQ("> ", frame.lines.back().text);
 }
 
+// 场景：Ollama 连不上，StreamError 落在消息的 error 字段上。
+// 领域语义：失败必须看得见。StreamError 把 phase 打回 Idle 并写下 error —— 也就是
+// 状态行变空、正文一个字都没有。如果帧里不体现 error，用户看到的是「回车之后什么
+// 都没发生」，与卡死无从区分，只能猜是不是自己网络坏了。行式 REPL 有 report_errors
+// 专门打这个，TUI 必须由 view 承担同一件事，否则接进去就是功能退化。
+// Red 原因：当前 view 完全没有读 message.error。
+TEST(ViewTest, ShowsTheFailureSoASilentDeadEndIsNeverMistakenForAHang)
+{
+    const my_agent::Model model = model_with({
+        {.role = my_agent::Role::User, .text = "hi"},
+        {.role = my_agent::Role::Assistant, .text = "", .error = "connection refused"},
+    });
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 40, .rows = 10}
+    );
+
+    bool found = false;
+    for (const my_agent::ui::StyledLine& line : frame.lines) {
+        if (line.text.find("connection refused") != std::string::npos) {
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found) << "错误必须上屏，否则与卡死无从区分";
+}
+
+// 场景：错误文本比终端还宽。
+// 领域语义：错误信息常常很长（带 URL、errno、provider 原样返回的一句话）。它和正文
+// 受同一条约束 —— 不折行就会溢出，破坏「帧不超过 rows 行、每行不超过 columns 列」
+// 这个契约，光标于是定位到别人头上。所以错误也必须按宽度折行。
+TEST(ViewTest, WrapsALongFailureMessageLikeAnyOtherLine)
+{
+    const my_agent::Model model = model_with({
+        {.role = my_agent::Role::Assistant,
+         .text = "",
+         .error = "connection refused while dialing localhost:11434 after 3 attempts"},
+    });
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 24, .rows = 10}
+    );
+
+    for (const my_agent::ui::StyledLine& line : frame.lines) {
+        EXPECT_GE(24, my_agent::ui::display_width(line.text))
+            << "溢出的行会破坏行数契约：" << line.text;
+    }
+}
+
 }  // namespace

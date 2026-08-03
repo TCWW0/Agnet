@@ -755,4 +755,5 @@ target_link_libraries(
         my_agent_async_runtime
         my_agent_provider
         my_agent_prompt
+        my_agent_ui_loop
 )

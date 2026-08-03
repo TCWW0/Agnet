@@ -115,6 +115,19 @@ Frame view(const Model& model, const UiState& ui, Size size)
             });
             first = false;
         }
+
+        // 失败必须看得见。StreamError 把 phase 打回 Idle 并写下 error —— 状态行因此
+        // 变空、正文可能一个字都没有，于是「回车之后什么都没发生」与卡死无从区分。
+        // 跟在正文之后而不是替换它：流到一半才断的回合，已经吐出来的那半段仍然是
+        // 用户要看的上下文。前缀用 ! 而不是 * —— 纯文本终端里行首那两个字符是唯一
+        // 的区分手段，和正常回答同前缀会让人以为模型就是这么答的。
+        if (message.error) {
+            const std::vector<std::string> wrapped_error =
+                wrap("! " + *message.error, size.columns);
+            for (const std::string& line : wrapped_error) {
+                frame.lines.push_back(StyledLine{.text = line});
+            }
+        }
     }
 
     if (const std::string status = status_line(model); !status.empty()) {

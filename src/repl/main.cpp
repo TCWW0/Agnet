@@ -4,6 +4,8 @@
 #include "my_agent/runtime/async_host.hpp"
 #include "my_agent/tool/memory_store.hpp"
 #include "my_agent/tool/skills.hpp"
+#include "my_agent/ui/terminal.hpp"
+#include "my_agent/ui/ui_loop.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -12,6 +14,8 @@
 #include <string_view>
 #include <variant>
 #include <vector>
+
+#include <unistd.h>
 
 namespace {
 
@@ -123,42 +127,11 @@ void report_errors(const my_agent::Model& model)
     }
 }
 
-}  // namespace
-
-int main()
+// 行式回退路径。非 tty（管道、CI、重定向、`| tee`）时走这条 —— 往文件里吐转义
+// 序列毫无意义，而这条路径本身还是阶段一的验收出口，保留着它就保留了一个不依赖
+// 终端的端到端通道。
+void run_line_repl(my_agent::AsyncHost& host_runtime)
 {
-    const std::string host = env_or("MY_AGENT_OLLAMA_HOST", "localhost");
-    const int port = std::stoi(env_or("MY_AGENT_OLLAMA_PORT", "11434"));
-    const std::string model = env_or("MY_AGENT_MODEL", "qwen3.5:latest");
-    const std::string profile_name = env_or("MY_AGENT_PROFILE", "write");
-
-    my_agent::AsyncHost host_runtime{
-        my_agent::provider::ollama::make_stream(
-            host,
-            port,
-            model,
-            std::make_shared<my_agent::http::HttpClient>()
-        ),
-    };
-
-    // 每轮重新构建：memory 与 skill 目录会在会话过程中变化。remember 工具刚写下
-    // 的事实，下一轮就必须出现在提示里 —— 这正是 provider 是函数而不是字符串的
-    // 理由。
-    host_runtime.set_system_prompt_provider([] {
-        my_agent::prompt::Context context = my_agent::prompt::capture_environment();
-        context.memories = load_memories();
-        context.skills_catalog = load_skills_catalog();
-        return my_agent::prompt::build(context);
-    });
-
-    host_runtime.dispatch(my_agent::Msg{
-        my_agent::SetProfile{parse_profile(profile_name)},
-    });
-
-    std::cout << "my_agent REPL — model " << model << " at " << host << ':'
-              << port << " (profile: " << profile_name << ")"
-              << "\nType your message, or Ctrl-D to exit.\n";
-
     Printer printer;
     std::string line;
 
@@ -205,6 +178,64 @@ int main()
         report_errors(host_runtime.model());
         std::cout << "\n";
     }
+}
+
+}  // namespace
+
+int main()
+{
+    const std::string host = env_or("MY_AGENT_OLLAMA_HOST", "localhost");
+    const int port = std::stoi(env_or("MY_AGENT_OLLAMA_PORT", "11434"));
+    const std::string model = env_or("MY_AGENT_MODEL", "qwen3.5:latest");
+    const std::string profile_name = env_or("MY_AGENT_PROFILE", "write");
+
+    my_agent::AsyncHost host_runtime{
+        my_agent::provider::ollama::make_stream(
+            host,
+            port,
+            model,
+            std::make_shared<my_agent::http::HttpClient>()
+        ),
+    };
+
+    // 每轮重新构建：memory 与 skill 目录会在会话过程中变化。remember 工具刚写下
+    // 的事实，下一轮就必须出现在提示里 —— 这正是 provider 是函数而不是字符串的
+    // 理由。
+    host_runtime.set_system_prompt_provider([] {
+        my_agent::prompt::Context context = my_agent::prompt::capture_environment();
+        context.memories = load_memories();
+        context.skills_catalog = load_skills_catalog();
+        return my_agent::prompt::build(context);
+    });
+
+    host_runtime.dispatch(my_agent::Msg{
+        my_agent::SetProfile{parse_profile(profile_name)},
+    });
+
+    {
+        // 驱动的作用域必须比 run_ui 大一点：析构负责退出备用屏并还原 termios，
+        // 而下面那句给行式回退路径的提示得等还原之后才打，否则它会连同备用屏一起
+        // 被丢掉，用户看到的是一个没有任何说明的空白屏。
+        my_agent::ui::TerminalDriver terminal{STDIN_FILENO, STDOUT_FILENO};
+        // 崩溃时析构不会执行，而 raw mode 没还原意味着用户的 shell 从此不回显 ——
+        // 只能敲 reset 才救得回来。所以这条路径不能依赖 RAII。放在真实入口而不是
+        // 驱动构造函数里：挂信号是进程级副作用，测试要能构造驱动而不动它。
+        terminal.install_crash_handler();
+
+        // 非 tty 时 run_ui 立刻返回 false。判断放在 run_ui 里而不是这里，是因为
+        // 「能不能跑」是那个循环自己的前置条件，调用方只需要知道它没跑。
+        if (my_agent::ui::run_ui(host_runtime, terminal)) {
+            host_runtime.shutdown();
+            return 0;
+        }
+    }
+
+    std::cout << "my_agent REPL — model " << model << " at " << host << ':'
+              << port << " (profile: " << profile_name << ")"
+              << "\nNot a terminal, falling back to line mode."
+              << "\nType your message, or Ctrl-D to exit.\n";
+
+    run_line_repl(host_runtime);
 
     host_runtime.shutdown();
     return 0;
