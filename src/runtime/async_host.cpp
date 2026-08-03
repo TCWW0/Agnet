@@ -140,8 +140,20 @@ namespace my_agent{
     {
     }
 
+    void AsyncHost::set_system_prompt_provider(SystemPromptProvider provider)
+    {
+        system_prompt_provider_ = std::move(provider);
+    }
+
     void AsyncHost::execute_cmd(StartStream command)
     {
+        // update() 是纯的，make_request() 只能把 system_prompt 留空。在这里补上：
+        // 构建它要读 memory / skill 文件，IO 属于 effect 侧。每轮重新构建，因为
+        // remember 工具会在会话过程中改动这些内容。
+        if (system_prompt_provider_) {
+            command.request.system_prompt = system_prompt_provider_();
+        }
+
         StreamEffect stream = stream_;
         std::shared_ptr<InboxState> inbox = inbox_;
         std::stop_token token = pool_.stop_token();

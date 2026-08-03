@@ -376,6 +376,60 @@ TEST(AsyncHostTest, WorkerSinkSkipsPostingAfterShutdownRequestsStop)
     ));
 }
 
+// 场景：注入系统提示 provider 后跑一个回合。
+// 领域语义：update() 是纯函数、不能读文件，所以 make_request() 只能把
+// system_prompt 留空；宿主在 effect 侧补上。这是 M7（memory/skills）唯一需要的
+// 接入点，也是"IO 留在 effect 侧、update 保持纯"这条边界的体现。
+// provider 每轮都被调用，因为 remember 工具会在会话过程中改动 memory 内容。
+TEST(AsyncHostTest, FillsSystemPromptFromProviderOnEveryRequest)
+{
+    std::vector<std::string> seen_prompts;
+    int builds = 0;
+
+    my_agent::StreamEffect fake_stream =
+        [&seen_prompts](my_agent::Request request, my_agent::EventSink sink) {
+            seen_prompts.push_back(request.system_prompt);
+            sink(my_agent::Msg{my_agent::StreamFinished{}});
+        };
+
+    my_agent::AsyncHost host{std::move(fake_stream)};
+    host.set_system_prompt_provider([&builds] {
+        ++builds;
+        return "prompt-" + std::to_string(builds);
+    });
+
+    host.dispatch(my_agent::Msg{my_agent::Submit{.text = "one"}});
+    host.run_until_quiescent();
+
+    host.dispatch(my_agent::Msg{my_agent::Submit{.text = "two"}});
+    host.run_until_quiescent();
+
+    ASSERT_EQ(std::size_t{2}, seen_prompts.size());
+    EXPECT_EQ("prompt-1", seen_prompts.at(0));
+    EXPECT_EQ("prompt-2", seen_prompts.at(1));
+}
+
+// 场景：没有注入 provider。
+// 领域语义：system_prompt 是可选的，缺省为空 —— 既有测试与 HeadlessRunner 都
+// 用 designated initializer 构造 Request，新字段缺省即空，所以它们零改动。
+TEST(AsyncHostTest, LeavesSystemPromptEmptyWithoutAProvider)
+{
+    std::string seen{"not-overwritten"};
+
+    my_agent::StreamEffect fake_stream =
+        [&seen](my_agent::Request request, my_agent::EventSink sink) {
+            seen = request.system_prompt;
+            sink(my_agent::Msg{my_agent::StreamFinished{}});
+        };
+
+    my_agent::AsyncHost host{std::move(fake_stream)};
+
+    host.dispatch(my_agent::Msg{my_agent::Submit{.text = "ping"}});
+    host.run_until_quiescent();
+
+    EXPECT_TRUE(seen.empty());
+}
+
 // 场景：owner 提交输入后直接进入阻塞事件循环，不再手摇 wake/drain。
 // 领域语义：run_until_quiescent 是 owner thread 的主循环 —— 阻塞等唤醒、
 // drain Inbox、把 Msg 交给 update()、解释返回的 Cmd，直到没有 in-flight

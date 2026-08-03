@@ -350,3 +350,51 @@ gtest_discover_tests(
     ollama_transport_test
     TEST_PREFIX "ollama_transport."
 )
+
+# 系统提示构建器：build() 保持纯，只有 capture_environment 碰 IO
+add_library(
+    my_agent_prompt
+    src/prompt/system_prompt.cpp
+)
+
+target_include_directories(
+    my_agent_prompt
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_prompt
+    PUBLIC cxx_std_23
+)
+
+add_executable(
+    system_prompt_test
+    tests/system_prompt_test.cpp
+)
+
+target_link_libraries(
+    system_prompt_test
+    PRIVATE
+        my_agent_prompt
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    system_prompt_test
+    TEST_PREFIX "system_prompt."
+)
+
+# 阶段一演示终点：最小 REPL。只碰 dispatch / run_until_quiescent / model
+add_executable(
+    my_agent_repl
+    src/repl/main.cpp
+)
+
+target_link_libraries(
+    my_agent_repl
+    PRIVATE
+        my_agent_async_runtime
+        my_agent_provider
+        my_agent_prompt
+)

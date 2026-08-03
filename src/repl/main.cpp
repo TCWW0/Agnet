@@ -1,0 +1,177 @@
+#include "my_agent/http/http_client.hpp"
+#include "my_agent/prompt/system_prompt.hpp"
+#include "my_agent/provider/ollama.hpp"
+#include "my_agent/runtime/async_host.hpp"
+
+#include <cstdlib>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <variant>
+
+namespace {
+
+std::string env_or(const char* name, std::string fallback)
+{
+    const char* value = std::getenv(name);
+    return (value != nullptr && *value != '\0') ? std::string{value}
+                                                : std::move(fallback);
+}
+
+// 前端只碰 dispatch / run_until_quiescent / model 三个公开 seam，与循环核心解耦。
+// 流式 token 要在到达时立刻可见，但 Msg 类型里没有渲染回调 —— 所以这里记住已
+// 打印的长度，每次 drain 之后只输出增量。未来的 TUI 从同一个位置接入。
+class Printer {
+public:
+    void render(const my_agent::Model& model)
+    {
+        if (model.thread.messages.empty()) {
+            return;
+        }
+
+        const my_agent::Message& latest = model.thread.messages.back();
+        if (latest.role != my_agent::Role::Assistant) {
+            return;
+        }
+
+        if (latest.text.size() > printed_) {
+            std::cout << std::string_view{latest.text}.substr(printed_)
+                      << std::flush;
+            printed_ = latest.text.size();
+        }
+    }
+
+    void begin_turn() { printed_ = 0; }
+
+private:
+    std::size_t printed_{0};
+};
+
+// 权限审批：停在 AwaitingPermission 时问一次 y/n。这是 M4 权限闭环的终端出口。
+bool ask_approval(const my_agent::PendingPermission& pending, const my_agent::Model& model)
+{
+    std::string tool_name{"(unknown)"};
+    for (const my_agent::Message& message : model.thread.messages) {
+        for (const my_agent::ToolCall& call : message.tool_calls) {
+            if (call.id == pending.id) {
+                tool_name = call.name;
+            }
+        }
+    }
+
+    std::cout << "\n[permission] allow tool '" << tool_name << "'? [y/N] "
+              << std::flush;
+
+    std::string answer;
+    if (!std::getline(std::cin, answer)) {
+        return false;
+    }
+
+    return answer == "y" || answer == "Y";
+}
+
+my_agent::Profile parse_profile(std::string_view name)
+{
+    if (name == "minimal") {
+        return my_agent::Profile::Minimal;
+    }
+    if (name == "ask") {
+        return my_agent::Profile::Ask;
+    }
+    return my_agent::Profile::Write;
+}
+
+void report_errors(const my_agent::Model& model)
+{
+    if (model.thread.messages.empty()) {
+        return;
+    }
+
+    const my_agent::Message& latest = model.thread.messages.back();
+    if (latest.error) {
+        std::cout << "\n[error] " << *latest.error << "\n";
+    }
+}
+
+}  // namespace
+
+int main()
+{
+    const std::string host = env_or("MY_AGENT_OLLAMA_HOST", "localhost");
+    const int port = std::stoi(env_or("MY_AGENT_OLLAMA_PORT", "11434"));
+    const std::string model = env_or("MY_AGENT_MODEL", "qwen3.5:latest");
+    const std::string profile_name = env_or("MY_AGENT_PROFILE", "write");
+
+    my_agent::AsyncHost host_runtime{
+        my_agent::provider::ollama::make_stream(
+            host,
+            port,
+            model,
+            std::make_shared<my_agent::http::HttpClient>()
+        ),
+    };
+
+    // 每轮重新构建：memory 与 skill 目录会在会话过程中变化。
+    host_runtime.set_system_prompt_provider([] {
+        return my_agent::prompt::build(my_agent::prompt::capture_environment());
+    });
+
+    host_runtime.dispatch(my_agent::Msg{
+        my_agent::SetProfile{parse_profile(profile_name)},
+    });
+
+    std::cout << "my_agent REPL — model " << model << " at " << host << ':'
+              << port << " (profile: " << profile_name << ")"
+              << "\nType your message, or Ctrl-D to exit.\n";
+
+    Printer printer;
+    std::string line;
+
+    while (true) {
+        std::cout << "\n> " << std::flush;
+        if (!std::getline(std::cin, line)) {
+            std::cout << "\n";
+            break;
+        }
+
+        if (line.empty()) {
+            continue;
+        }
+
+        printer.begin_turn();
+        host_runtime.dispatch(my_agent::Msg{my_agent::Submit{.text = line}});
+
+        // 一个回合可能要多次进出循环：每次工具审批都是一个静止点。
+        while (true) {
+            host_runtime.run_until_quiescent();
+            printer.render(host_runtime.model());
+
+            const my_agent::Model& current = host_runtime.model();
+            if (!std::holds_alternative<my_agent::AwaitingPermission>(current.phase)) {
+                break;
+            }
+
+            if (!current.pending_permission) {
+                break;
+            }
+
+            const my_agent::PendingPermission pending = *current.pending_permission;
+            if (ask_approval(pending, current)) {
+                host_runtime.dispatch(my_agent::Msg{
+                    my_agent::PermissionApprove{.id = pending.id},
+                });
+            } else {
+                host_runtime.dispatch(my_agent::Msg{
+                    my_agent::PermissionReject{.id = pending.id},
+                });
+            }
+        }
+
+        report_errors(host_runtime.model());
+        std::cout << "\n";
+    }
+
+    host_runtime.shutdown();
+    return 0;
+}
