@@ -118,6 +118,8 @@ std::string ToolError::render() const
             return "[not found] " + message;
         case ErrorKind::OutOfWorkspace:
             return "[out of workspace] " + message;
+        case ErrorKind::ExecutionFailed:
+            return "[execution failed] " + message;
     }
     return message;
 }

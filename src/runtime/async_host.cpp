@@ -3,6 +3,7 @@
 #include "my_agent/runtime/agent.hpp"
 #include "my_agent/runtime/msg.hpp"
 #include "my_agent/tool/tool.hpp"
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <stop_token>
@@ -12,7 +13,7 @@
 
 namespace my_agent{
     struct AsyncHost::InboxState{
-        explicit InboxState(WakeOwner wake):wake_owner(std::move(wake))
+        explicit InboxState(std::shared_ptr<WakeSignal> wake):wake(std::move(wake))
         {
         }
 
@@ -27,8 +28,8 @@ namespace my_agent{
                 messages.push_back(std::move(msg));
             }
 
-            if (should_wake&&wake_owner){
-                wake_owner();
+            if (should_wake&&wake){
+                wake->signal();
             }
         }
 
@@ -43,18 +44,20 @@ namespace my_agent{
             return batch;
         }
 
-        WakeOwner wake_owner;           // 生产者通知消费者的方式
+        std::shared_ptr<WakeSignal> wake;   // 生产者通知消费者的方式
         std::mutex mutex;
         std::vector<Msg> messages;
 
     };
 
-    AsyncHost::AsyncHost(StreamEffect stream,WakeOwner wake_owner)
-        :AsyncHost(std::move(stream),ToolExecEffect{tool::execute},std::move(wake_owner))
+    AsyncHost::AsyncHost(StreamEffect stream)
+        :AsyncHost(std::move(stream),ToolExecEffect{tool::execute})
     {}
-    
-    AsyncHost::AsyncHost(StreamEffect stream,ToolExecEffect execute_tool,WakeOwner wake_owner)
-        :stream_(std::move(stream)),execute_tool_(execute_tool),inbox_(std::make_shared<InboxState>(std::move(wake_owner)))
+
+    AsyncHost::AsyncHost(StreamEffect stream,ToolExecEffect execute_tool)
+        :stream_(std::move(stream)),execute_tool_(execute_tool),
+         wake_(std::make_shared<WakeSignal>()),
+         inbox_(std::make_shared<InboxState>(wake_))
         {}
 
     AsyncHost::~AsyncHost()
@@ -81,6 +84,40 @@ namespace my_agent{
         }
     }
 
+    bool AsyncHost::is_quiescent() const noexcept
+    {
+        // Idle：回合已结束。AwaitingPermission：等的是 owner 自己的审批输入，
+        // 没有 in-flight worker 会送来消息，继续 wait 只会挂死。
+        // Streaming / ExecutingTool：必然有 worker 在飞，phase 本身就是
+        // in-flight 计数器，所以不需要额外的计数器。
+        return std::holds_alternative<Idle>(current_model_.phase)
+            || std::holds_alternative<AwaitingPermission>(current_model_.phase);
+    }
+
+    void AsyncHost::run_until_quiescent()
+    {
+        while (true) {
+            if (stop_source_.stop_requested()) {
+                return;
+            }
+
+            // 先 drain 再 wait：唤醒是电平合并的，进入 wait 之前先把已到达的
+            // 消息全部消费掉，否则"消息已在 Inbox 但唤醒已被消费"会挂死。
+            drain_inbox();
+
+            if (is_quiescent()) {
+                return;
+            }
+
+            wake_->wait();
+        }
+    }
+
+    bool AsyncHost::wait_wake(std::chrono::milliseconds timeout)
+    {
+        return wake_->wait_for(timeout);
+    }
+
     void AsyncHost::process_msg(Msg msg)
     {
         Step step = update(std::move(current_model_),std::move(msg));
@@ -105,12 +142,35 @@ namespace my_agent{
                 inbox = std::move(inbox),
                 request = std::move(command.request)
             ]() mutable {
-                EventSink sink = [inbox,token] (Msg msg){
+                // 事件循环把 phase 当作 in-flight 计数器，这依赖一条边界保证：
+                // 每次 stream 调用都必须投出恰好一个终态事件。Provider 抛异常
+                // 或静默返回时若不补上，owner 会永久停在 Streaming 上等一个
+                // 永不到来的消息。用超时兜会让测试 flaky，所以在这里强制。
+                bool terminal_posted = false;
+
+                EventSink sink = [inbox,token,&terminal_posted] (Msg msg){
+                    if (std::holds_alternative<StreamFinished>(msg)
+                        || std::holds_alternative<StreamError>(msg)) {
+                        terminal_posted = true;
+                    }
+
                     if (token.stop_requested()) return;
                     inbox -> post(std::move(msg));
                 };
 
-                stream(std::move(request),std::move(sink));
+                try {
+                    stream(std::move(request),sink);
+                } catch (const std::exception& error) {
+                    sink(Msg{StreamError{.message = error.what()}});
+                } catch (...) {
+                    sink(Msg{StreamError{.message = "unknown stream failure"}});
+                }
+
+                if (!terminal_posted) {
+                    sink(Msg{StreamError{
+                        .message = "stream returned without a terminal event",
+                    }});
+                }
             }
         );
     }
@@ -122,13 +182,29 @@ namespace my_agent{
         std::stop_token token = stop_source_.get_token();
 
         workers_.emplace_back(
-            [     
+            [
                 execute_tool = std::move(execute_tool),
                 inbox = std::move(inbox),
                 token = token,
                 command = std::move(command)
             ]()mutable {
-                tool::ExecResult result = execute_tool(command.name,command.args);
+                // 同样的边界保证：ExecutingTool 也靠 phase 当 in-flight 计数
+                // 器，工具抛异常必须收敛成一次失败结果投递回去。
+                tool::ExecResult result = [&]() -> tool::ExecResult {
+                    try {
+                        return execute_tool(command.name,command.args);
+                    } catch (const std::exception& error) {
+                        return std::unexpected(tool::ToolError{
+                            .kind = tool::ErrorKind::ExecutionFailed,
+                            .message = error.what(),
+                        });
+                    } catch (...) {
+                        return std::unexpected(tool::ToolError{
+                            .kind = tool::ErrorKind::ExecutionFailed,
+                            .message = "unknown tool failure",
+                        });
+                    }
+                }();
 
                 if (token.stop_requested()) return;
                 inbox->post(Msg{
@@ -143,8 +219,9 @@ namespace my_agent{
 
     void AsyncHost::shutdown()
     {
+        // Owner-thread only，且是终态：stop 之后不再重置 stop_source_。重置会
+        // 让仍持有旧 token 的 worker 变成孤儿，永远看不到停止请求。
         stop_source_.request_stop();
         workers_.clear();
-        stop_source_ = std::stop_source{};
     }
 }

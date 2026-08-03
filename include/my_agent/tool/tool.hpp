@@ -20,6 +20,9 @@ enum class ErrorKind {
     InvalidArgs,
     NotFound,
     OutOfWorkspace,
+    // 工具实现自身抛了异常。宿主把它收敛成一次工具失败交回模型，而不是让异常
+    // 逃出 worker 线程触发 std::terminate。
+    ExecutionFailed,
 };
 
 struct ToolError {

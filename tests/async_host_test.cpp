@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstddef>
 #include <semaphore>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -26,7 +27,6 @@ TEST(AsyncHostTest, BackgroundProviderEventsChangeModelOnlyWhenOwnerDrainsInbox)
 
     // 用于本测试了解当前 Provider 已经处理完成了对应的投递
     std::binary_semaphore provider_finished{0};
-    std::counting_semaphore<8> owner_wake{0};
 
     my_agent::StreamEffect fake_stream =
         [&](my_agent::Request, my_agent::EventSink sink) {
@@ -40,11 +40,7 @@ TEST(AsyncHostTest, BackgroundProviderEventsChangeModelOnlyWhenOwnerDrainsInbox)
             provider_finished.release();
         };
 
-    my_agent::AsyncHost host{
-        std::move(fake_stream),
-        // 释放一个信号量使得 acquire 能够成功
-        [&owner_wake] { owner_wake.release(); },
-    };
+    my_agent::AsyncHost host{std::move(fake_stream)};
 
     host.dispatch(my_agent::Msg{
         my_agent::Submit{.text = "ping"},
@@ -60,7 +56,7 @@ TEST(AsyncHostTest, BackgroundProviderEventsChangeModelOnlyWhenOwnerDrainsInbox)
     ASSERT_EQ(std::size_t{2}, before_drain.thread.messages.size());
     EXPECT_TRUE(before_drain.thread.messages.back().text.empty());
 
-    EXPECT_TRUE(owner_wake.try_acquire_for(1s));
+    EXPECT_TRUE(host.wait_wake(1s));
 
     host.drain_inbox();
 
@@ -82,7 +78,6 @@ TEST(AsyncHostTest, BackgroundToolResultChangesModelOnlyWhenOwnerDrainsInbox)
 
     std::binary_semaphore first_provider_finished{0};
     std::binary_semaphore tool_finished{0};
-    std::counting_semaphore<8> owner_wake{0};
 
     std::atomic_size_t stream_calls{0};
     std::string executed_name;
@@ -121,7 +116,6 @@ TEST(AsyncHostTest, BackgroundToolResultChangesModelOnlyWhenOwnerDrainsInbox)
     my_agent::AsyncHost host{
         std::move(fake_stream),
         std::move(fake_tool),
-        [&owner_wake] { owner_wake.release(); },
     };
 
     host.dispatch(my_agent::Msg{
@@ -129,7 +123,7 @@ TEST(AsyncHostTest, BackgroundToolResultChangesModelOnlyWhenOwnerDrainsInbox)
     });
 
     ASSERT_TRUE(first_provider_finished.try_acquire_for(1s));
-    ASSERT_TRUE(owner_wake.try_acquire_for(1s));
+    ASSERT_TRUE(host.wait_wake(1s));
 
     host.drain_inbox();
 
@@ -153,7 +147,7 @@ TEST(AsyncHostTest, BackgroundToolResultChangesModelOnlyWhenOwnerDrainsInbox)
         before_tool_drain.thread.messages.back().tool_calls.front().status
     ));
 
-    ASSERT_TRUE(owner_wake.try_acquire_for(1s));
+    ASSERT_TRUE(host.wait_wake(1s));
     host.drain_inbox();
 
     const my_agent::Model& after_tool_drain = host.model();
@@ -184,7 +178,6 @@ TEST(AsyncHostTest, MinimalProfilePermissionFlowCompletesAcrossAsyncBoundary)
     std::binary_semaphore first_provider_finished{0};
     std::binary_semaphore tool_finished{0};
     std::binary_semaphore second_provider_finished{0};
-    std::counting_semaphore<8> owner_wake{0};
 
     std::atomic_size_t stream_calls{0};
     std::string executed_name;
@@ -227,7 +220,6 @@ TEST(AsyncHostTest, MinimalProfilePermissionFlowCompletesAcrossAsyncBoundary)
     my_agent::AsyncHost host{
         std::move(fake_stream),
         std::move(fake_tool),
-        [&owner_wake] { owner_wake.release(); },
     };
 
     // 设为 Minimal，确保后续工具需要审批
@@ -252,7 +244,7 @@ TEST(AsyncHostTest, MinimalProfilePermissionFlowCompletesAcrossAsyncBoundary)
         EXPECT_TRUE(m.thread.messages.back().text.empty());
     }
 
-    ASSERT_TRUE(owner_wake.try_acquire_for(1s));
+    ASSERT_TRUE(host.wait_wake(1s));
     host.drain_inbox();
 
     // 第一次 drain 后：Core 判定 read + Minimal → 需要审批，暂停
@@ -294,7 +286,7 @@ TEST(AsyncHostTest, MinimalProfilePermissionFlowCompletesAcrossAsyncBoundary)
     EXPECT_EQ("read", executed_name);
     EXPECT_EQ("test.txt", executed_path);
 
-    ASSERT_TRUE(owner_wake.try_acquire_for(1s));
+    ASSERT_TRUE(host.wait_wake(1s));
     host.drain_inbox();
 
     // 第二次 drain 后：Tool Done → continuation StartStream → 新 Provider worker
@@ -315,7 +307,7 @@ TEST(AsyncHostTest, MinimalProfilePermissionFlowCompletesAcrossAsyncBoundary)
 
     // 等待第二次 Provider 调用完成
     ASSERT_TRUE(second_provider_finished.try_acquire_for(1s));
-    ASSERT_TRUE(owner_wake.try_acquire_for(1s));
+    ASSERT_TRUE(host.wait_wake(1s));
     host.drain_inbox();
 
     // 第三次 drain 后：最终文本到达，回合结束
@@ -340,7 +332,6 @@ TEST(AsyncHostTest, WorkerSinkSkipsPostingAfterShutdownRequestsStop)
     std::binary_semaphore stream_blocked{0};
     std::binary_semaphore release_stream{0};
     std::binary_semaphore stream_returned{0};
-    std::counting_semaphore<8> owner_wake{0};
 
     my_agent::StreamEffect blocking_stream =
         [&](my_agent::Request, my_agent::EventSink sink) {
@@ -353,10 +344,7 @@ TEST(AsyncHostTest, WorkerSinkSkipsPostingAfterShutdownRequestsStop)
             stream_returned.release();
         };
 
-    my_agent::AsyncHost host{
-        std::move(blocking_stream),
-        [&owner_wake] { owner_wake.release(); },
-    };
+    my_agent::AsyncHost host{std::move(blocking_stream)};
 
     host.dispatch(my_agent::Msg{
         my_agent::Submit{.text = "ping"},
@@ -380,9 +368,174 @@ TEST(AsyncHostTest, WorkerSinkSkipsPostingAfterShutdownRequestsStop)
     EXPECT_TRUE(stream_returned.try_acquire_for(100ms));
 
     // 核心断言：sink 检查了 stop_token，跳过了 post，wake 未被触发
-    EXPECT_FALSE(owner_wake.try_acquire_for(100ms));
+    EXPECT_FALSE(host.wait_wake(100ms));
 
     // Model 仍停留在 Streaming（没有任何消息到达）
+    EXPECT_TRUE(std::holds_alternative<my_agent::Streaming>(
+        host.model().phase
+    ));
+}
+
+// 场景：owner 提交输入后直接进入阻塞事件循环，不再手摇 wake/drain。
+// 领域语义：run_until_quiescent 是 owner thread 的主循环 —— 阻塞等唤醒、
+// drain Inbox、把 Msg 交给 update()、解释返回的 Cmd，直到没有 in-flight
+// worker 可等为止。一个纯文本回合的静止点是 Idle。
+TEST(AsyncHostTest, RunUntilQuiescentDrivesATextTurnToIdle)
+{
+    my_agent::StreamEffect fake_stream =
+        [](my_agent::Request, my_agent::EventSink sink) {
+            sink(my_agent::Msg{my_agent::StreamTextDelta{.text = "po"}});
+            sink(my_agent::Msg{my_agent::StreamTextDelta{.text = "ng"}});
+            sink(my_agent::Msg{my_agent::StreamFinished{}});
+        };
+
+    my_agent::AsyncHost host{std::move(fake_stream)};
+
+    host.dispatch(my_agent::Msg{my_agent::Submit{.text = "ping"}});
+    host.run_until_quiescent();
+
+    const my_agent::Model& model = host.model();
+    EXPECT_TRUE(std::holds_alternative<my_agent::Idle>(model.phase));
+    ASSERT_EQ(std::size_t{2}, model.thread.messages.size());
+    EXPECT_EQ("pong", model.thread.messages.back().text);
+}
+
+// 场景：Minimal Profile 下工具需要审批，循环必须在 AwaitingPermission 上返回。
+// 领域语义：AwaitingPermission 时等的是 owner 自己的审批输入，没有后台 worker
+// 会送来消息 —— 继续 wait 会永久挂死。所以它和 Idle 同为静止点。审批后再次进
+// 入循环，工具执行与 continuation 都在同一次调用内跑完。
+TEST(AsyncHostTest, RunUntilQuiescentReturnsWhileAwaitingPermission)
+{
+    std::atomic_size_t stream_calls{0};
+
+    my_agent::StreamEffect fake_stream =
+        [&stream_calls](my_agent::Request, my_agent::EventSink sink) {
+            if (stream_calls.fetch_add(1) == 0) {
+                sink(my_agent::Msg{
+                    my_agent::StreamToolCall{
+                        .id = "call-1",
+                        .name = "read",
+                        .args = {{"path", "test.txt"}},
+                    },
+                });
+            } else {
+                sink(my_agent::Msg{my_agent::StreamTextDelta{.text = "done"}});
+            }
+            sink(my_agent::Msg{my_agent::StreamFinished{}});
+        };
+
+    my_agent::ToolExecEffect fake_tool =
+        [](std::string_view, const nlohmann::json&)
+            -> my_agent::tool::ExecResult {
+            return my_agent::tool::ToolOutput{.text = "file content here"};
+        };
+
+    my_agent::AsyncHost host{std::move(fake_stream), std::move(fake_tool)};
+
+    host.dispatch(my_agent::Msg{
+        my_agent::SetProfile{my_agent::Profile::Minimal},
+    });
+    host.dispatch(my_agent::Msg{my_agent::Submit{.text = "read file"}});
+
+    host.run_until_quiescent();
+
+    {
+        const my_agent::Model& model = host.model();
+        ASSERT_TRUE(std::holds_alternative<my_agent::AwaitingPermission>(
+            model.phase
+        ));
+        ASSERT_TRUE(model.pending_permission.has_value());
+        EXPECT_EQ("call-1", model.pending_permission->id);
+    }
+
+    host.dispatch(my_agent::Msg{
+        my_agent::PermissionApprove{.id = "call-1"},
+    });
+    host.run_until_quiescent();
+
+    const my_agent::Model& model = host.model();
+    EXPECT_TRUE(std::holds_alternative<my_agent::Idle>(model.phase));
+    ASSERT_EQ(std::size_t{3}, model.thread.messages.size());
+    EXPECT_EQ("done", model.thread.messages.back().text);
+}
+
+// 场景：Provider 实现有 bug，一个终态事件都没投就返回了。
+// 领域语义：事件循环把 phase 当作 in-flight 计数器，这依赖"每次 stream 调用
+// 恰好投出一个终态事件"的边界保证。宿主必须在 worker 包装层强制这条保证，
+// 否则 owner 会永久停在 Streaming 上等一个永不到来的消息。用超时兜会让测试
+// flaky，所以在 worker 返回时合成 StreamError。
+TEST(AsyncHostTest, RunUntilQuiescentSurvivesStreamReturningWithoutTerminalEvent)
+{
+    my_agent::StreamEffect silent_stream =
+        [](my_agent::Request, my_agent::EventSink) {};
+
+    my_agent::AsyncHost host{std::move(silent_stream)};
+
+    host.dispatch(my_agent::Msg{my_agent::Submit{.text = "ping"}});
+    host.run_until_quiescent();
+
+    const my_agent::Model& model = host.model();
+    EXPECT_TRUE(std::holds_alternative<my_agent::Idle>(model.phase));
+    ASSERT_TRUE(model.thread.messages.back().error.has_value());
+    EXPECT_NE(
+        std::string::npos,
+        model.thread.messages.back().error->find("terminal event")
+    );
+}
+
+// 场景：Provider 抛异常逃出 stream 调用。
+// 领域语义：同一条边界保证的另一半。异常若逃出 worker 线程会触发
+// std::terminate，宿主必须把它收敛成一次 StreamError 交回 Core，让回合以
+// 可见的错误结束而不是整个进程崩掉。
+TEST(AsyncHostTest, RunUntilQuiescentConvertsStreamExceptionIntoStreamError)
+{
+    my_agent::StreamEffect throwing_stream =
+        [](my_agent::Request, my_agent::EventSink) {
+            throw std::runtime_error{"provider exploded"};
+        };
+
+    my_agent::AsyncHost host{std::move(throwing_stream)};
+
+    host.dispatch(my_agent::Msg{my_agent::Submit{.text = "ping"}});
+    host.run_until_quiescent();
+
+    const my_agent::Model& model = host.model();
+    EXPECT_TRUE(std::holds_alternative<my_agent::Idle>(model.phase));
+    ASSERT_TRUE(model.thread.messages.back().error.has_value());
+    EXPECT_EQ("provider exploded", *model.thread.messages.back().error);
+}
+
+// 场景：shutdown 后 owner 再次进入事件循环。
+// 领域语义：stop 是终态。循环入口先查 stop_requested 直接返回，否则 shutdown
+// 与 run 的竞态会让 owner 阻塞在一个再也不会有人 signal 的 wake 上。
+TEST(AsyncHostTest, RunUntilQuiescentReturnsImmediatelyAfterShutdown)
+{
+    std::binary_semaphore stream_blocked{0};
+    std::binary_semaphore release_stream{0};
+
+    my_agent::StreamEffect blocking_stream =
+        [&](my_agent::Request, my_agent::EventSink sink) {
+            stream_blocked.release();
+            release_stream.acquire();
+            sink(my_agent::Msg{my_agent::StreamFinished{}});
+        };
+
+    my_agent::AsyncHost host{std::move(blocking_stream)};
+
+    host.dispatch(my_agent::Msg{my_agent::Submit{.text = "ping"}});
+    ASSERT_TRUE(stream_blocked.try_acquire_for(1s));
+
+    std::thread releaser([&] {
+        std::this_thread::sleep_for(50ms);
+        release_stream.release();
+    });
+
+    host.shutdown();
+    releaser.join();
+
+    // Streaming 不是静止点，但 stop 已请求 —— 必须立刻返回而不是永久阻塞。
+    host.run_until_quiescent();
+
     EXPECT_TRUE(std::holds_alternative<my_agent::Streaming>(
         host.model().phase
     ));
