@@ -14,7 +14,9 @@
 // 探针自身的验证：断言用哨兵串 GH7ZQ（不可能预先存在），基线在敲键**之前**抓。
 
 #include "my_agent/ui/terminal.hpp"
+#include "my_agent/ui/text_width.hpp"
 #include "my_agent/ui/ui_loop.hpp"
+#include "unicode_width_oracle.hpp"
 #include "virtual_terminal.hpp"
 
 #include <chrono>
@@ -234,6 +236,56 @@ TEST(GhostLineProbeTest, OverflowOnTheLastRowDoesNotScrollAwayTheHistory)
     EXPECT_EQ(0, screen.scrolls_in_alt_screen())
         << "备用屏滚动了 " << screen.scrolls_in_alt_screen()
         << " 次 —— 此后每一次 CUP 都落在错位的物理行上，这就是幽灵行";
+}
+
+// 负向断言（切片 #13 写入）：证明成因 2（无条件 EL）独立于成因 3（宽度欠算）。
+//
+// 它替换掉 #13 原本写的那条「补齐宽度表后上面两条 pty 探针仍然失败」—— 实测推翻了
+// 它：补表之后两条**同时转绿**。欠算正是把行推到右边距的那个力，tail_within 一旦
+// 按真实宽度裁剪，输入行就够不到边距，DECAWM 也就没东西可咬。两者是串联的，不是
+// 独立的。真正独立于宽度表的是这一条：纯 ASCII，不经过任何宽度判断。
+//
+// 机制（ECMA-48 §8.3.118）：内容填满至第 W-1 列时光标**停在**那里并置待换行位，
+// 不前进到第 W 列。frame_bytes 紧接着发 \x1b[K（EL）从光标处擦到行尾 —— 擦掉的
+// 正是刚画上去的最后一格。
+//
+// 帧里必须有第二行：ED(0) 同样从停在末列的光标处擦起，若填满的行是帧的最后一行，
+// ED 会擦掉和 EL 同一格，红就无法归因给 EL。真实帧里输入行永远在最后，填满的行
+// 只出现在中间 —— 所以「后面还有一行」也才是真实形态。
+//
+// 不用 pty：缺陷完全在 frame_bytes 的字节生成里，真驱动只会引入线程与超时的噪声，
+// 对这条机制没有额外鉴别力；驱动那一层由上面两条 pty 探针覆盖。
+//
+// Red 原因：frame_bytes 无条件发 EL。#14 为填满至 W-1 列的行跳过 EL 后转绿。
+TEST(GhostLineProbeTest, ALineThatExactlyFillsTheWidthKeepsItsLastCell)
+{
+    // wrap() 明写「正好填满的那一行是合法的」（判定用 > 而不是 >=），所以这条路径
+    // 真实可达。无空格的长串走硬断分支，第一行必然正好填满。
+    const std::vector<std::string> wrapped =
+        my_agent::ui::wrap(std::string(2 * kColumns, 'x'), kColumns);
+
+    ASSERT_FALSE(wrapped.empty()) << "折行一行都没出";
+    ASSERT_EQ(kColumns, my_agent::test::oracle_display_width(wrapped.front()))
+        << "第一行没有正好填满，这条探针的前提不成立";
+
+    // 填满的行在中间，后面跟一行输入行 —— 与真实帧的形态一致。
+    const my_agent::ui::Frame frame{
+        .lines = {{.text = wrapped.front()}, {.text = "> "}},
+    };
+
+    my_agent::test::VirtualTerminal screen{kColumns, kRows};
+    screen.feed(my_agent::ui::enter_bytes());
+    screen.feed(my_agent::ui::frame_bytes(frame));
+
+    ASSERT_TRUE(screen.unhandled().empty())
+        << "量具遇到了没记账的序列：" << screen.unhandled().front();
+
+    // 不必再写「未填满时必须照常发 EL」的对照：terminal_test 的
+    // ErasesToEndOfEachLineSoLongerPreviousLinesLeaveNoResidue 已经守着那一侧，
+    // #14 若图省事直接删掉 EL，那条会变红。
+    EXPECT_EQ(wrapped.front(), screen.screen().front())
+        << "正好填满整行的那一行少了最后一格 —— EL 从停在第 W-1 列的光标处擦起，"
+           "擦掉的正是刚画上去的那个字符";
 }
 
 }  // namespace
