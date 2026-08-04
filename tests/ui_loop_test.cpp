@@ -147,18 +147,47 @@ TEST(UiLoopTest, EnterOnAnEmptyLineDoesNotSubmit)
     EXPECT_FALSE(outcome.msg.has_value());
 }
 
-// 场景：Ctrl-D 与 Ctrl-C。
-// 领域语义：这两个是唯一的退出路径，必须被认出来 —— 否则用户只能靠 SIGKILL 退出，
-// 而那条路上备用屏和 termios 都还不回去。本切片不做中断（那需要新的 Msg 变体和
-// 协作停止），所以 Ctrl-C 也是退出。
-// Red 原因：当前实现对这两个键返回空结果，循环不会退出。
-TEST(UiLoopTest, CtrlDAndCtrlCRequestQuitSoTheTerminalIsAlwaysRestored)
+TEST(UiLoopTest, CtrlCAndCtrlUClearTheDraftWithoutSubmittingOrQuitting)
+{
+    UiState ctrl_c_ui{.input = "draft", .cursor = 2};
+    const my_agent::Model model;
+
+    const KeyOutcome ctrl_c = apply_key(
+        Key{.kind = Key::Kind::Interrupt}, ctrl_c_ui, model
+    );
+    EXPECT_FALSE(ctrl_c.msg.has_value());
+    EXPECT_FALSE(ctrl_c.quit);
+    EXPECT_TRUE(ctrl_c_ui.input.empty());
+    EXPECT_EQ(0u, ctrl_c_ui.cursor);
+
+    UiState ctrl_u_ui{.input = "draft", .cursor = 2};
+    const KeyOutcome ctrl_u = apply_key(
+        Key{.kind = Key::Kind::ClearInput}, ctrl_u_ui, model
+    );
+    EXPECT_FALSE(ctrl_u.msg.has_value());
+    EXPECT_FALSE(ctrl_u.quit);
+    EXPECT_TRUE(ctrl_u_ui.input.empty());
+    EXPECT_EQ(0u, ctrl_u_ui.cursor);
+}
+
+TEST(UiLoopTest, CtrlCOnAnEmptyDraftDoesNotQuit)
+{
+    UiState ui;
+    const my_agent::Model model;
+
+    const KeyOutcome outcome = apply_key(
+        Key{.kind = Key::Kind::Interrupt}, ui, model
+    );
+    EXPECT_FALSE(outcome.msg.has_value());
+    EXPECT_FALSE(outcome.quit);
+}
+
+TEST(UiLoopTest, CtrlDRemainsTheExplicitQuitKey)
 {
     UiState ui;
     const my_agent::Model model;
 
     EXPECT_TRUE(apply_key(Key{.kind = Key::Kind::Eof}, ui, model).quit);
-    EXPECT_TRUE(apply_key(Key{.kind = Key::Kind::Interrupt}, ui, model).quit);
 }
 
 // 场景：非 tty 上启动 UI。

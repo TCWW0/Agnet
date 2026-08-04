@@ -12,6 +12,7 @@ struct Key {
         Text,
         Enter,
         Backspace,
+        ClearInput,
         Left,
         Right,
         Up,

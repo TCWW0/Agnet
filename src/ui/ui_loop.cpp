@@ -60,6 +60,12 @@ KeyOutcome apply_key(const Key& key, UiState& ui, const Model& model)
             return {};
         }
 
+        case Key::Kind::ClearInput:
+        case Key::Kind::Interrupt:
+            ui.input.clear();
+            ui.cursor = 0;
+            return {};
+
         case Key::Kind::Enter: {
             // 空行不发 Submit：模型会收到一条空用户消息，白跑一次往返，
             // 有些 provider 还会直接报错。
@@ -73,9 +79,8 @@ KeyOutcome apply_key(const Key& key, UiState& ui, const Model& model)
         }
 
         case Key::Kind::Eof:
-        case Key::Kind::Interrupt:
-            // 唯一的退出路径。不认这两个键，用户只能 SIGKILL —— 那条路上
-            // 备用屏和 termios 都还不回去。
+            // 唯一的退出路径。不认这个键，用户只能 SIGKILL —— 那条路上备用屏和
+            // termios 都还不回去。
             return KeyOutcome{.quit = true};
     }
     return {};

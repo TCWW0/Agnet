@@ -41,7 +41,7 @@ TEST(InputTest, StitchesAMultibyteCharacterSplitAcrossTwoReads)
     EXPECT_EQ("你", second[0].text);
 }
 
-// 场景：回车、退格、Ctrl-C、Ctrl-D。
+// 场景：回车、退格、Ctrl-C、Ctrl-U、Ctrl-D。
 // 领域语义：这四个是控制字节而不是文本 —— 把它们当文本会往输入行里插入不可见字符。
 // 回车在 raw mode 下是 \r 而不是 \n（关掉了 ICRNL），认错会让回车毫无反应，
 // 这是 raw mode 下最典型的失误。Ctrl-C 必须作为按键到达而不是杀进程，
@@ -52,13 +52,16 @@ TEST(InputTest, DecodesControlBytesAsKeysRatherThanText)
     my_agent::ui::InputDecoder decoder;
 
     // \r 而非 \n：raw mode 关掉了 ICRNL，回车原样是 \r。
-    const std::vector<my_agent::ui::Key> keys = decoder.feed("\r\x7f\x03\x04");
+    const std::vector<my_agent::ui::Key> keys = decoder.feed(
+        "\r\x7f\x03\x15\x04"
+    );
 
-    ASSERT_EQ(4u, keys.size());
+    ASSERT_EQ(5u, keys.size());
     EXPECT_EQ(my_agent::ui::Key::Kind::Enter, keys[0].kind);
     EXPECT_EQ(my_agent::ui::Key::Kind::Backspace, keys[1].kind);
     EXPECT_EQ(my_agent::ui::Key::Kind::Interrupt, keys[2].kind);
-    EXPECT_EQ(my_agent::ui::Key::Kind::Eof, keys[3].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::ClearInput, keys[3].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::Eof, keys[4].kind);
     for (const my_agent::ui::Key& key : keys) {
         EXPECT_TRUE(key.text.empty()) << "控制键不该带文本";
     }

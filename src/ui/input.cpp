@@ -42,6 +42,8 @@ Key::Kind control_kind(unsigned char byte) noexcept
             return Key::Kind::Backspace;
         case 0x03:
             return Key::Kind::Interrupt;  // Ctrl-C：按键而非信号，见 ISIG 已关闭
+        case 0x15:
+            return Key::Kind::ClearInput;  // Ctrl-U：清空当前输入
         case 0x04:
             return Key::Kind::Eof;  // Ctrl-D
         default:
