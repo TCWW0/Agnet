@@ -1,6 +1,7 @@
 #include "my_agent/ui/view.hpp"
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -12,6 +13,16 @@ my_agent::Model model_with(std::vector<my_agent::Message> messages = {})
     my_agent::Model model;
     model.thread.messages = std::move(messages);
     return model;
+}
+
+std::string rendered_text(const my_agent::ui::Frame& frame)
+{
+    std::string result;
+    for (const my_agent::ui::StyledLine& line : frame.lines) {
+        result += line.text;
+        result += '\n';
+    }
+    return result;
 }
 
 // 场景：一条用户消息投影成帧。
@@ -152,6 +163,129 @@ TEST(ViewTest, NamesTheToolAwaitingApproval)
         }
     }
     EXPECT_TRUE(names_tool);
+}
+
+TEST(ViewTest, RendersEachToolCallStateAsAVisiblyDistinctCard)
+{
+    const nlohmann::json args = {
+        {"operation", "multiply"},
+        {"left", 6},
+        {"right", 7},
+    };
+    const my_agent::Model model = model_with({
+        {.role = my_agent::Role::Assistant,
+         .text = "",
+         .tool_calls = {
+             {.id = "pending", .name = "calculator", .args = args},
+             {.id = "done", .name = "calculator", .args = args,
+              .status = my_agent::ToolCall::Done{.output = "42"}},
+             {.id = "failed", .name = "calculator", .args = args,
+              .status = my_agent::ToolCall::Failed{.output = "bad input"}},
+             {.id = "rejected", .name = "calculator", .args = args,
+              .status = my_agent::ToolCall::Rejected{.output = "denied"}},
+         }},
+    });
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 80, .rows = 30}
+    );
+
+    const std::string text = rendered_text(frame);
+    EXPECT_NE(std::string::npos, text.find("[pending]"));
+    EXPECT_NE(std::string::npos, text.find("[done]"));
+    EXPECT_NE(std::string::npos, text.find("[failed]"));
+    EXPECT_NE(std::string::npos, text.find("[rejected]"));
+
+    const auto find_line = [&frame](std::string_view marker)
+        -> const my_agent::ui::StyledLine* {
+        for (const my_agent::ui::StyledLine& line : frame.lines) {
+            if (line.text.find(marker) != std::string::npos) {
+                return &line;
+            }
+        }
+        return nullptr;
+    };
+    const my_agent::ui::StyledLine* pending = find_line("[pending]");
+    const my_agent::ui::StyledLine* done = find_line("[done]");
+    const my_agent::ui::StyledLine* failed = find_line("[failed]");
+    const my_agent::ui::StyledLine* rejected = find_line("[rejected]");
+    ASSERT_NE(nullptr, pending);
+    ASSERT_NE(nullptr, done);
+    ASSERT_NE(nullptr, failed);
+    ASSERT_NE(nullptr, rejected);
+    EXPECT_NE(pending->foreground, done->foreground);
+    EXPECT_NE(pending->foreground, failed->foreground);
+    EXPECT_NE(pending->foreground, rejected->foreground);
+    EXPECT_NE(done->foreground, failed->foreground);
+    EXPECT_NE(done->foreground, rejected->foreground);
+    EXPECT_NE(failed->foreground, rejected->foreground);
+}
+
+TEST(ViewTest, ShowsActualToolArgumentsInTheCard)
+{
+    const my_agent::Model model = model_with({
+        {.role = my_agent::Role::Assistant,
+         .text = "",
+         .tool_calls = {
+             {.id = "read-1", .name = "read",
+              .args = { {"path", "notes.md"}, {"limit", 2} }},
+         }},
+    });
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 80, .rows = 10}
+    );
+
+    const std::string text = rendered_text(frame);
+    EXPECT_NE(std::string::npos, text.find("args:"));
+    EXPECT_NE(std::string::npos, text.find("notes.md"));
+    EXPECT_NE(std::string::npos, text.find("limit"));
+}
+
+TEST(ViewTest, ShowsPermissionToolEffectAndArguments)
+{
+    my_agent::Model model = model_with({
+        {.role = my_agent::Role::Assistant,
+         .text = "",
+         .tool_calls = {
+             {.id = "remember-1", .name = "remember",
+              .args = { {"text", "Use zsh"}, {"scope", "project"} }},
+         }},
+    });
+    model.phase = my_agent::AwaitingPermission{};
+    model.pending_permission = my_agent::PendingPermission{.id = "remember-1"};
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 100, .rows = 10}
+    );
+
+    const std::string text = rendered_text(frame);
+    EXPECT_NE(std::string::npos, text.find("allow remember"));
+    EXPECT_NE(std::string::npos, text.find("effect=write_fs"));
+    EXPECT_NE(std::string::npos, text.find("Use zsh"));
+    EXPECT_NE(std::string::npos, text.find("project"));
+}
+
+TEST(ViewTest, TruncatesLongToolOutputAndReportsElidedCharacters)
+{
+    const std::string output(400, 'x');
+    const my_agent::Model model = model_with({
+        {.role = my_agent::Role::Assistant,
+         .text = "",
+         .tool_calls = {
+             {.id = "done-1", .name = "calculator", .args = {},
+              .status = my_agent::ToolCall::Done{.output = output}},
+         }},
+    });
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 80, .rows = 10}
+    );
+
+    const std::string text = rendered_text(frame);
+    EXPECT_NE(std::string::npos, text.find("output:"));
+    EXPECT_NE(std::string::npos, text.find("characters elided"));
+    EXPECT_EQ(std::string::npos, text.find(output));
 }
 
 // 场景：历史比屏幕长。

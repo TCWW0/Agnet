@@ -1,4 +1,5 @@
 #include "my_agent/ui/maya_projection.hpp"
+#include "my_agent/ui/view.hpp"
 #include "virtual_terminal.hpp"
 
 #include <maya/render/frame.hpp>
@@ -112,6 +113,38 @@ TEST(MayaProjectionTest, CarriesStyledLineAttributesThroughMaya)
 
     EXPECT_TRUE(has_sgr_sequence_with_params(bytes, {"1", "91", "106"})) << bytes;
     EXPECT_NE(bytes.find(kStyledLine), std::string::npos) << bytes;
+}
+
+TEST(MayaProjectionTest, CarriesToolCardDetailsToFrameBufferBytes)
+{
+    my_agent::Model model;
+    model.thread.messages.push_back({
+        .role = my_agent::Role::Assistant,
+        .text = "",
+        .tool_calls = {
+            {.id = "remember-1", .name = "remember",
+             .args = { {"text", "Use zsh"}, {"scope", "project"} }},
+        },
+    });
+    model.phase = my_agent::AwaitingPermission{};
+    model.pending_permission = my_agent::PendingPermission{.id = "remember-1"};
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model,
+        my_agent::ui::UiState{},
+        my_agent::ui::Size{.columns = 120, .rows = 12}
+    );
+    maya::FrameBuffer framebuffer{120, 12};
+    const std::string& bytes = framebuffer.render(
+        my_agent::ui::to_maya_element(frame, maya::theme::dark),
+        maya::theme::dark
+    );
+
+    EXPECT_NE(bytes.find("[pending]"), std::string::npos) << bytes;
+    EXPECT_NE(bytes.find("remember"), std::string::npos) << bytes;
+    EXPECT_NE(bytes.find("effect=write_fs"), std::string::npos) << bytes;
+    EXPECT_NE(bytes.find("Use zsh"), std::string::npos) << bytes;
+    EXPECT_NE(bytes.find("project"), std::string::npos) << bytes;
 }
 
 TEST(MayaProjectionTest, WrapsMixedEmojiAndCjkTextThroughMaya)
