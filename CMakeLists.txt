@@ -525,6 +525,61 @@ gtest_discover_tests(
     TEST_PREFIX "text_width."
 )
 
+# 测试专用量具：最小虚拟终端。pty 不解释转义序列，所以「屏幕上有没有幽灵行」
+# 必须把字节流喂进一个会记账的模型才能回答。不进产品库 —— 它只服务测试。
+add_library(
+    my_agent_virtual_terminal
+    tests/virtual_terminal.cpp
+)
+
+target_include_directories(
+    my_agent_virtual_terminal
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests"
+)
+
+target_compile_features(
+    my_agent_virtual_terminal
+    PUBLIC cxx_std_23
+)
+
+add_executable(
+    virtual_terminal_test
+    tests/virtual_terminal_test.cpp
+)
+
+target_link_libraries(
+    virtual_terminal_test
+    PRIVATE
+        my_agent_virtual_terminal
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    virtual_terminal_test
+    TEST_PREFIX "virtual_terminal."
+)
+
+# 幽灵行 pty 复现探针。真 pty + 虚拟终端 + 官方宽度判据三层叠起来，才能把
+# 「屏幕上有幽灵行」变成一条会失败的断言。切片 #12 刻意让它红着。
+add_executable(
+    ghost_line_probe_test
+    tests/ghost_line_probe_test.cpp
+)
+
+target_link_libraries(
+    ghost_line_probe_test
+    PRIVATE
+        my_agent_ui_loop
+        my_agent_virtual_terminal
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    ghost_line_probe_test
+    TEST_PREFIX "ghost_line_probe."
+)
+
 # TUI 视图投影：Model -> Frame。纯函数，不碰终端，可脱离 tty 单测。
 add_library(
     my_agent_ui_view

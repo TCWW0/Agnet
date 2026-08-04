@@ -1,5 +1,8 @@
 #include "my_agent/ui/text_width.hpp"
 
+#include "unicode_width_oracle.hpp"
+
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -68,6 +71,80 @@ TEST(TextWidthTest, WrapEmitsWideCharacterEvenWhenItCannotFit)
     ASSERT_EQ(2u, lines.size());
     EXPECT_EQ("你", lines[0]);
     EXPECT_EQ("好", lines[1]);
+}
+
+// --- 以下是切片 #12 的红色基线：度量现有宽度表的欠算，不修任何东西 -------------
+//
+// 期望值的真相来源是 Unicode 16.0.0 官方 `EastAsianWidth.txt`（East_Asian_Width
+// 属性为 W 或 F 即 2 列），**不是**用与实现相同的方式重算出来的 —— 那样测试按构造
+// 必然通过。每条断言下面注明了官方数据里对应的那一行。
+//
+// 独立第二判据：tmux 3.2a 在 3 列宽的窗口里渲染 `A✅B`，✅ 占掉第 2、3 列，B 被挤到
+// 第二行；对照组 `AxB` 不折行。真实终端与官方数据一致，与本实现分歧。
+
+// 场景：emoji presentation 字符的显示宽度。
+// 领域语义：头文件已经声称 char_width 对「有 emoji 表现形式的字符」返回 2，
+// 而实现里 kWideRanges 根本没有这几个码点 —— 注释是意图，不是事实。
+// 这一条锁死那个缺口。欠算是会导致**溢出**的那个方向：模型回答里一个 ✅ 就让
+// 后面每一行横向错开一列，而错开的行数随 emoji 个数累积。
+// Red 原因：U+2705 落在 {0x2E80,0x303E} 之前、{0x1100,0x115F} 之后的空隙里，
+// char_width 走 in_wide_ranges 返回 false，得到 1 而不是 2。
+TEST(TextWidthTest, EmojiPresentationCharactersAreTwoColumnsWide)
+{
+    // EastAsianWidth-16.0.0.txt: `2705 ; W # So WHITE HEAVY CHECK MARK`
+    EXPECT_EQ(2, my_agent::ui::char_width(U'✅'));  // ✅
+    // `274C ; W # So CROSS MARK`
+    EXPECT_EQ(2, my_agent::ui::char_width(U'❌'));  // ❌
+    // `1F7E0..1F7EB ; W # So [12] LARGE ORANGE CIRCLE..LARGE BROWN SQUARE`
+    EXPECT_EQ(2, my_agent::ui::char_width(U'\U0001F7E2'));  // 🟢
+    // `26A1 ; W # So HIGH VOLTAGE SIGN`
+    EXPECT_EQ(2, my_agent::ui::char_width(U'⚡'));  // ⚡
+    // `2B50 ; W # So WHITE MEDIUM STAR`
+    EXPECT_EQ(2, my_agent::ui::char_width(U'⭐'));  // ⭐
+}
+
+// 场景：CJK 统一表意文字扩展区（B 区起，U+20000 以上的增补平面）。
+// 领域语义：这是欠算里体积最大的一块 —— 官方 W/F 集合共 182,719 个码点，本实现的
+// 22 条 range 只覆盖 43,694 个；单是 U+20000..U+2A6DF 一段就漏了 42,720 个。
+// 这些字在人名、地名、古籍引用里会真实出现，而漏算的后果和 emoji 完全一样：
+// wrap 以为放得下，终端里实际溢出。
+// Red 原因：kWideRanges 的最后一条是 {0x1F900,0x1F9FF}，增补平面的表意文字
+// 整体不在表内。
+TEST(TextWidthTest, CjkExtensionIdeographsBeyondTheBmpAreTwoColumnsWide)
+{
+    // EastAsianWidth-16.0.0.txt: `20000..2A6DF ; W # Lo [42720] CJK UNIFIED
+    // IDEOGRAPH-20000..CJK UNIFIED IDEOGRAPH-2A6DF`（扩展 B）
+    EXPECT_EQ(2, my_agent::ui::char_width(U'\U00020000'));
+    EXPECT_EQ(2, my_agent::ui::char_width(U'\U0002A6DF'));
+    // `2A700..2B739 ; W`（扩展 C）与 `2B820..2CEA1 ; W`（扩展 E）
+    EXPECT_EQ(2, my_agent::ui::char_width(U'\U0002A700'));
+    EXPECT_EQ(2, my_agent::ui::char_width(U'\U0002B820'));
+    // `2CEB0..2EBE0 ; W`（扩展 F，7,473 个码点）
+    EXPECT_EQ(2, my_agent::ui::char_width(U'\U0002CEB0'));
+}
+
+// 场景：含 emoji 的文本折行后，某一行的真实显示宽度超出了给定列宽。
+// 领域语义：这条是把宽度表和幽灵行**连起来**的那一条 —— 前两条只说「量错了」，
+// 这条说「量错了会让 wrap 违反它自己的契约」。wrap 承诺返回的每一行都不超过
+// columns 列；欠算之下它以为 5 个 ✅ 占 5 列（放得进 6 列），实际占 10 列。
+// 超宽行进到 frame_bytes 之后就是幽灵行：光标越过右边距 → DECAWM 未关 → 备用屏
+// 滚动一行 → 后续所有 CUP 绝对定位落到错位的物理行上。
+//
+// 宽度用 tests/unicode_width_oracle.hpp 量，不用 display_width —— 用被测函数量
+// 被测函数的输出，无论实现对错都会通过。
+// Red 原因：char_width(U'✅') 返回 1，wrap 把 5 个 emoji 全塞进一行。
+TEST(TextWidthTest, WrapNeverEmitsALineWiderThanTheGivenColumns)
+{
+    const std::vector<std::string> lines = my_agent::ui::wrap("✅✅✅✅✅", 6);
+
+    ASSERT_FALSE(lines.empty()) << "5 个 emoji 不该一行都不出";
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const int width = my_agent::test::oracle_display_width(lines[index]);
+        ASSERT_NE(my_agent::test::kUnknownWidth, width)
+            << "判据不认识第 " << index << " 行里的某个码点，断言无从成立";
+        EXPECT_LE(width, 6) << "第 " << index << " 行 \"" << lines[index]
+                            << "\" 实占 " << width << " 列，超出 6 列的契约";
+    }
 }
 
 }  // namespace
