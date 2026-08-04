@@ -24,7 +24,9 @@ TEST(TerminalTest, ErasesToEndOfEachLineSoLongerPreviousLinesLeaveNoResidue)
         .lines = {{.text = "first"}, {.text = "second"}},
     };
 
-    const std::string bytes = my_agent::ui::frame_bytes(frame);
+    // 80 列：两行都远窄于整宽，所以 EL 照常发 —— 这正是这条测试守着的那一侧
+    // （未填满的行必须擦横向残留），与 #14 让填满行跳过 EL 互为对照。
+    const std::string bytes = my_agent::ui::frame_bytes(frame, 80);
 
     // 每行正文之后紧跟 EL（擦到行尾）。
     EXPECT_NE(std::string::npos, bytes.find("first\x1b[K"));
@@ -42,7 +44,9 @@ TEST(TerminalTest, PositionsEachLineAtItsOwnRow)
         .lines = {{.text = "first"}, {.text = "second"}},
     };
 
-    const std::string bytes = my_agent::ui::frame_bytes(frame);
+    // 80 列：定位序列与列宽无关，给一个够宽的值让两行都不触发跳过 EL 的分支，
+    // 本条只断言 CUP 顺序，不受 EL 有无影响。
+    const std::string bytes = my_agent::ui::frame_bytes(frame, 80);
 
     const std::size_t row1 = bytes.find("\x1b[1;1H");
     const std::size_t row2 = bytes.find("\x1b[2;1H");
@@ -62,7 +66,8 @@ TEST(TerminalTest, ErasesBelowTheLastLineSoAShorterFrameLeavesNoResidue)
 {
     const my_agent::ui::Frame frame{.lines = {{.text = "only"}}};
 
-    const std::string bytes = my_agent::ui::frame_bytes(frame);
+    // 80 列："only" 远窄于整宽，ED 的存在与 EL 跳过分支无关，本条只断言 ED。
+    const std::string bytes = my_agent::ui::frame_bytes(frame, 80);
 
     const std::size_t erase_below = bytes.find("\x1b[J");
     ASSERT_NE(std::string::npos, erase_below);
@@ -84,14 +89,25 @@ TEST(TerminalTest, LeaveSequenceReversesEnterSequenceInOppositeOrder)
     const std::string alt_screen_off = "\x1b[?1049l";
     const std::string cursor_hide = "\x1b[?25l";
     const std::string cursor_show = "\x1b[?25h";
+    // DECAWM（自动换行）：进入关、退出开。#14 加进来的纵深防御，若不在这里断言其
+    // 对称，未来有人把 leave 的 ?7h 删掉或改序，这条「退出精确逆转进入」的不变量
+    // 会静默破掉 —— 破坏验证已证实此前没有任何测试守着它。
+    const std::string autowrap_off = "\x1b[?7l";
+    const std::string autowrap_on = "\x1b[?7h";
 
     ASSERT_NE(std::string::npos, enter.find(alt_screen_on));
+    ASSERT_NE(std::string::npos, enter.find(autowrap_off));
     ASSERT_NE(std::string::npos, enter.find(cursor_hide));
     ASSERT_NE(std::string::npos, leave.find(cursor_show));
+    ASSERT_NE(std::string::npos, leave.find(autowrap_on));
     ASSERT_NE(std::string::npos, leave.find(alt_screen_off));
 
-    EXPECT_LT(enter.find(alt_screen_on), enter.find(cursor_hide));
-    EXPECT_LT(leave.find(cursor_show), leave.find(alt_screen_off));
+    // 进入：切备用屏 → 关 autowrap → 藏光标。
+    EXPECT_LT(enter.find(alt_screen_on), enter.find(autowrap_off));
+    EXPECT_LT(enter.find(autowrap_off), enter.find(cursor_hide));
+    // 退出：显光标 → 开 autowrap → 回主屏。逐段都是进入的镜像。
+    EXPECT_LT(leave.find(cursor_show), leave.find(autowrap_on));
+    EXPECT_LT(leave.find(autowrap_on), leave.find(alt_screen_off));
 }
 
 // 场景：在非 tty 上构造驱动（CI、管道、`my_agent | tee`）。

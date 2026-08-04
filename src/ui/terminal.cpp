@@ -1,5 +1,7 @@
 #include "my_agent/ui/terminal.hpp"
 
+#include "my_agent/ui/text_width.hpp"
+
 #include <atomic>
 #include <cerrno>
 #include <csignal>
@@ -53,16 +55,24 @@ extern "C" void crash_signal_handler(int signal_number)
 // 1049 是「切备用屏并存光标位置」的组合，比老的 47 + 独立存光标少一次往返。
 // 备用屏而非 inline：inline 要精确记账滚出屏幕的物理行数，那是正确性问题；
 // 备用屏的代价（退出后历史消失）只是体验问题。
+//
+// ?7l 关 DECAWM（自动换行）：这是纵深防御，不针对任何当前已知缺陷。已知的两条幽灵行
+// 成因都已在 #13/#14 修掉（宽度表补齐 + 填满行跳过 EL），此时输入行按真实宽度裁剪，
+// 够不到右边距，DECAWM 无从咬起。这条防的是**未来**：宽度表跟不上 Unicode 新分配时，
+// 漏网字符会被欠算、把行推过右边距 —— DECAWM 关掉后光标钉在末列原地覆写而非滚屏，
+// 幽灵行退化成末格被覆盖这种局部瑕疵，而不是整屏错位。放在 frame_bytes 跳过填满行的
+// EL 之后才安全：DECAWM-off 时光标停在第 W-1 列，无条件 EL 会擦掉那一格（本片已处理）。
 std::string_view enter_bytes() noexcept
 {
-    return "\x1b[?1049h\x1b[?25l";
+    return "\x1b[?1049h\x1b[?7l\x1b[?25l";
 }
 
-// 精确逆转 enter_bytes，且顺序相反。先显光标再切回主屏 —— 反过来可能让主屏
-// 留着隐藏的光标，用户的 shell 从此看不见自己在打什么。
+// 精确逆转 enter_bytes，且顺序相反。先显光标、再开 DECAWM、最后切回主屏 —— 反过来
+// 可能让主屏留着隐藏的光标或关着的 autowrap，用户的 shell 从此看不见自己在打什么、
+// 或长命令不换行。
 std::string_view leave_bytes() noexcept
 {
-    return "\x1b[?25h\x1b[?1049l";
+    return "\x1b[?25h\x1b[?7h\x1b[?1049l";
 }
 
 TerminalDriver::TerminalDriver(int input_fd, int output_fd)
@@ -127,7 +137,9 @@ int TerminalDriver::input_fd() const noexcept
 bool TerminalDriver::render(const Frame& frame) noexcept
 {
     // 一次 write 写完整帧。分多次写会让终端有机会在中间刷新，出现半帧画面（撕裂）。
-    const std::string bytes = frame_bytes(frame);
+    // 列数从 size() 取 —— 它是「一行是否填满整宽」的唯一判据来源，render 手上有它，
+    // 而纯函数 frame_bytes 拿不到，所以必须由这里穿进去。
+    const std::string bytes = frame_bytes(frame, size().columns);
     return write_all(output_fd_, bytes);
 }
 
@@ -182,7 +194,7 @@ void TerminalDriver::restore_on_crash() noexcept
     );
 }
 
-std::string frame_bytes(const Frame& frame)
+std::string frame_bytes(const Frame& frame, int columns)
 {
     std::string bytes;
     int row = 1;  // CUP 的行列都是 1-based
@@ -191,7 +203,14 @@ std::string frame_bytes(const Frame& frame)
         // 界面会呈阶梯状。
         bytes += "\x1b[" + std::to_string(row) + ";1H";
         bytes += line.text;
-        bytes += "\x1b[K";  // EL：擦到行尾，抹掉上一帧更长的行留下的尾巴
+        // 只有未填满整宽的行才发 EL。填满至第 W-1 列的行光标停在末列并置待换行位
+        // （ECMA-48 §8.3.118），从那里发 EL 会擦掉刚画上去的最后一格 —— 幽灵行成因 2。
+        // 判据用显示宽度而非字节数：CJK 行字节数远大于列数。>= 而非 ==：万一某行超宽
+        // （不该发生，但 tail_within/wrap 之外的调用方无法保证），它同样铺满整行、
+        // 右侧无残留可擦，发 EL 只会误伤。
+        if (columns <= 0 || display_width(line.text) < columns) {
+            bytes += "\x1b[K";  // EL：擦到行尾，抹掉上一帧更长的行留下的尾巴
+        }
         ++row;
     }
     // ED(0)：擦到屏幕底部。EL 管横向残留，这条管纵向 —— 这一帧比上一帧短时，

@@ -275,7 +275,9 @@ TEST(GhostLineProbeTest, ALineThatExactlyFillsTheWidthKeepsItsLastCell)
 
     my_agent::test::VirtualTerminal screen{kColumns, kRows};
     screen.feed(my_agent::ui::enter_bytes());
-    screen.feed(my_agent::ui::frame_bytes(frame));
+    // 传 kColumns：填满行的显示宽度正好等于列数，frame_bytes 据此跳过 EL，
+    // 停在末列的光标不再擦掉刚画的最后一格。这正是 #14 的转绿点。
+    screen.feed(my_agent::ui::frame_bytes(frame, kColumns));
 
     ASSERT_TRUE(screen.unhandled().empty())
         << "量具遇到了没记账的序列：" << screen.unhandled().front();
