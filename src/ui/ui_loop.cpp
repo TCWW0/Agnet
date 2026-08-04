@@ -102,6 +102,7 @@ bool run_ui(
     }
 
     UiState ui;
+    MarkdownState markdown_state;
     InputDecoder decoder;
     RepaintClock clock{kFramesPerSecond};
     // 作用域绑在循环上：处理器随 run_ui 返回而摘掉，不给非 tty 回退路径留残留。
@@ -116,7 +117,9 @@ bool run_ui(
     // 开局先画一帧：否则屏幕在用户敲第一个键之前是空的。
     static_cast<void>(clock.should_paint(RepaintClock::Clock::now()));
     refresh_status();
-    static_cast<void>(terminal.render(view(host.model(), ui, terminal.size())));
+    static_cast<void>(terminal.render(
+        view(host.model(), ui, terminal.size(), markdown_state)
+    ));
 
     const int wake_fd = host.wake_fd();
     // 键盘 fd 由驱动给出，不能假定 STDIN_FILENO —— 假定会让驱动持有的 fd 被彻底忽略，
@@ -135,7 +138,9 @@ bool run_ui(
 
         if (clock.should_paint(RepaintClock::Clock::now())) {
             refresh_status();
-            static_cast<void>(terminal.render(view(host.model(), ui, terminal.size())));
+            static_cast<void>(terminal.render(
+                view(host.model(), ui, terminal.size(), markdown_state)
+            ));
         }
 
         // 键盘固定在 [0]。唤醒与窗口变化按可用性依次追加 —— 哨兵（fd 为 -1）

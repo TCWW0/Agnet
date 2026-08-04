@@ -174,6 +174,31 @@ TEST(MayaProjectionTest, CarriesToolCardDetailsToFrameBufferBytes)
     EXPECT_NE(bytes.find("project"), std::string::npos) << bytes;
 }
 
+TEST(MayaProjectionTest, CarriesCommittedMarkdownAndActiveTextToFrameBufferBytes)
+{
+    my_agent::Model model;
+    model.thread.messages.push_back({
+        .role = my_agent::Role::Assistant,
+        .text = "# Heading\n```cpp\nint answer = 42;\n```\n",
+    });
+    model.phase = my_agent::Streaming{};
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model,
+        my_agent::ui::UiState{},
+        my_agent::ui::Size{.columns = 100, .rows = 12}
+    );
+    maya::FrameBuffer framebuffer{100, 12};
+    const std::string& bytes = framebuffer.render(
+        my_agent::ui::to_maya_element(frame, maya::theme::dark),
+        maya::theme::dark
+    );
+
+    EXPECT_NE(bytes.find("Heading"), std::string::npos) << bytes;
+    EXPECT_NE(bytes.find("cpp"), std::string::npos) << bytes;
+    EXPECT_NE(bytes.find("int answer = 42;"), std::string::npos) << bytes;
+}
+
 TEST(MayaProjectionTest, WrapsMixedEmojiAndCjkTextThroughMaya)
 {
     const my_agent::ui::Frame frame{

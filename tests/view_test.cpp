@@ -1,5 +1,6 @@
 #include "my_agent/ui/view.hpp"
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -453,6 +454,127 @@ TEST(ViewTest, LeavesLongFailureMessageWholeForMayaLayout)
         }
     }
     EXPECT_TRUE(found);
+}
+
+TEST(ViewTest, RendersTheSupportedMarkdownSubset)
+{
+    my_agent::Model model = model_with({
+        {.role = my_agent::Role::Assistant,
+         .text = "# Heading\n**bold** and `code`\n"},
+    });
+    model.phase = my_agent::Streaming{};
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 80, .rows = 20}
+    );
+
+    const std::string text = rendered_text(frame);
+    EXPECT_NE(std::string::npos, text.find("Heading"));
+    EXPECT_NE(std::string::npos, text.find("bold"));
+    EXPECT_NE(std::string::npos, text.find("code"));
+    EXPECT_EQ(std::string::npos, text.find("# Heading"));
+    EXPECT_EQ(std::string::npos, text.find("**bold**"));
+    EXPECT_EQ(std::string::npos, text.find("`code`"));
+
+    const auto heading = std::find_if(
+        frame.lines.begin(), frame.lines.end(),
+        [](const my_agent::ui::StyledLine& line) {
+            return line.text.find("Heading") != std::string::npos;
+        }
+    );
+    ASSERT_NE(frame.lines.end(), heading);
+    EXPECT_TRUE(heading->bold);
+}
+
+TEST(ViewTest, KeepsTheFenceLanguageVisibleInCommittedMarkdown)
+{
+    my_agent::Model model = model_with({
+        {.role = my_agent::Role::Assistant,
+         .text = "```cpp\nint answer = 42;\n```\n"},
+    });
+    model.phase = my_agent::Streaming{};
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 80, .rows = 20}
+    );
+
+    ASSERT_EQ(1u, frame.markdown_layers.size());
+    EXPECT_EQ(model.thread.messages.front().text,
+              frame.markdown_layers.front().committed_prefix);
+    EXPECT_TRUE(frame.markdown_layers.front().active_tail.empty());
+    const std::string text = rendered_text(frame);
+    EXPECT_NE(std::string::npos, text.find("cpp"));
+    EXPECT_NE(std::string::npos, text.find("int answer = 42;"));
+    EXPECT_EQ(std::string::npos, text.find("```cpp"));
+}
+
+TEST(ViewTest, LeavesAnUnclosedFenceInThePlainTextActiveTail)
+{
+    my_agent::Model model = model_with({
+        {.role = my_agent::Role::Assistant,
+         .text = "before\n```cpp\nint answer = 42;\n"},
+    });
+    model.phase = my_agent::Streaming{};
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 80, .rows = 20}
+    );
+
+    ASSERT_EQ(1u, frame.markdown_layers.size());
+    EXPECT_EQ("before\n", frame.markdown_layers.front().committed_prefix);
+    EXPECT_EQ("```cpp\nint answer = 42;\n",
+              frame.markdown_layers.front().active_tail);
+    EXPECT_NE(std::string::npos, rendered_text(frame).find("```cpp"));
+}
+
+TEST(ViewTest, ParsesEachNewCommittedPrefixSegmentOnlyOnce)
+{
+    my_agent::Model model = model_with({
+        {.role = my_agent::Role::Assistant, .text = "first\n"},
+    });
+    model.phase = my_agent::Streaming{};
+    my_agent::ui::MarkdownState state;
+
+    static_cast<void>(my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 80, .rows = 20},
+        state
+    ));
+    ASSERT_EQ(1u, state.messages.size());
+    EXPECT_EQ(1u, state.messages.front().committed_prefix_parse_count);
+
+    model.thread.messages.front().text += "second\n";
+    static_cast<void>(my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 80, .rows = 20},
+        state
+    ));
+    EXPECT_EQ(2u, state.messages.front().committed_prefix_parse_count);
+
+    static_cast<void>(my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 80, .rows = 20},
+        state
+    ));
+    EXPECT_EQ(2u, state.messages.front().committed_prefix_parse_count);
+}
+
+TEST(ViewTest, FinalizedMarkdownCommitsTheTrailingLine)
+{
+    const my_agent::Model model = model_with({
+        {.role = my_agent::Role::Assistant,
+         .text = "# Heading without a trailing newline"},
+    });
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 80, .rows = 20}
+    );
+
+    ASSERT_EQ(1u, frame.markdown_layers.size());
+    EXPECT_EQ("# Heading without a trailing newline",
+              frame.markdown_layers.front().committed_prefix);
+    EXPECT_TRUE(frame.markdown_layers.front().active_tail.empty());
+    EXPECT_NE(
+        std::string::npos,
+        rendered_text(frame).find("Heading without a trailing newline")
+    );
 }
 
 }  // namespace

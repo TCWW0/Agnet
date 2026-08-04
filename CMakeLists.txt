@@ -576,6 +576,22 @@ gtest_discover_tests(
 
 # TUI 视图投影：Model -> Frame。纯函数，不碰终端，可脱离 tty 单测。
 add_library(
+    my_agent_ui_markdown
+    src/ui/markdown_scanner.cpp
+)
+
+target_include_directories(
+    my_agent_ui_markdown
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_ui_markdown
+    PUBLIC cxx_std_26
+)
+
+add_library(
     my_agent_ui_view
     src/ui/view.cpp
 )
@@ -596,6 +612,7 @@ target_link_libraries(
     PUBLIC
         my_agent_core
         my_agent_ui_input_layout
+        my_agent_ui_markdown
         my_agent_ui_status_bar
 )
 
@@ -647,6 +664,34 @@ target_link_libraries(
 gtest_discover_tests(
     view_test
     TEST_PREFIX "view."
+)
+
+add_executable(
+    markdown_scanner_test
+    tests/markdown_scanner_test.cpp
+)
+
+target_include_directories(
+    markdown_scanner_test
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    markdown_scanner_test
+    PRIVATE cxx_std_26
+)
+
+target_link_libraries(
+    markdown_scanner_test
+    PRIVATE
+        my_agent_ui_markdown
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    markdown_scanner_test
+    TEST_PREFIX "markdown_scanner."
 )
 
 # TUI Maya projection: our own Frame/StyledLine IR -> maya::Element. This is the

@@ -4,10 +4,12 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <variant>
+#include <vector>
 
 namespace my_agent::ui {
 
@@ -113,6 +115,232 @@ std::string truncate_tool_output(std::string_view output)
     const std::size_t elided = utf8_codepoint_count(output.substr(visible_end));
     return std::string{output.substr(0, visible_end)}
         + " [... " + std::to_string(elided) + " characters elided]";
+}
+
+struct FenceLine {
+    bool is_fence{false};
+    bool closes_fence{false};
+    std::string language;
+};
+
+[[nodiscard]]
+FenceLine fence_line(std::string_view line)
+{
+    std::size_t offset = 0;
+    while (offset < line.size()
+           && (line[offset] == ' ' || line[offset] == '\t')) {
+        ++offset;
+    }
+
+    const std::size_t tick_start = offset;
+    while (offset < line.size() && line[offset] == '`') {
+        ++offset;
+    }
+    if (offset - tick_start < 3) {
+        return {};
+    }
+
+    const std::string_view suffix = line.substr(offset);
+    std::size_t language_start = 0;
+    while (language_start < suffix.size()
+           && (suffix[language_start] == ' '
+               || suffix[language_start] == '\t')) {
+        ++language_start;
+    }
+    const std::string_view language = suffix.substr(language_start);
+    const bool closes = language.empty();
+    return FenceLine{
+        .is_fence = true,
+        .closes_fence = closes,
+        .language = closes ? std::string{} : std::string{language},
+    };
+}
+
+struct InlineLine {
+    std::string text;
+    bool bold{false};
+    bool code{false};
+};
+
+[[nodiscard]]
+InlineLine render_inline(std::string_view line)
+{
+    InlineLine result;
+    std::size_t offset = 0;
+    while (offset < line.size()) {
+        if (line.substr(offset, 2) == "**") {
+            const std::size_t end = line.find("**", offset + 2);
+            if (end != std::string_view::npos) {
+                result.text.append(line, offset + 2, end - offset - 2);
+                result.bold = true;
+                offset = end + 2;
+                continue;
+            }
+        }
+        if (line[offset] == '`') {
+            const std::size_t end = line.find('`', offset + 1);
+            if (end != std::string_view::npos) {
+                result.text.append(line, offset + 1, end - offset - 1);
+                result.code = true;
+                offset = end + 1;
+                continue;
+            }
+        }
+        result.text.push_back(line[offset]);
+        ++offset;
+    }
+    return result;
+}
+
+[[nodiscard]]
+std::optional<std::string> heading_text(std::string_view line)
+{
+    std::size_t marker_end = 0;
+    while (marker_end < line.size() && line[marker_end] == '#'
+           && marker_end < 6) {
+        ++marker_end;
+    }
+    if (marker_end == 0 || marker_end == line.size()
+        || line[marker_end] != ' ') {
+        return std::nullopt;
+    }
+    return std::string{line.substr(marker_end + 1)};
+}
+
+void append_markdown_line(
+    std::vector<StyledLine>& lines,
+    std::string_view line,
+    bool in_code
+)
+{
+    if (in_code) {
+        lines.push_back(StyledLine{
+            .text = "  " + std::string{line},
+            .foreground = StyleColor::Secondary,
+            .dim = true,
+        });
+        return;
+    }
+
+    if (const std::optional<std::string> heading = heading_text(line)) {
+        lines.push_back(StyledLine{
+            .text = *heading,
+            .foreground = StyleColor::Accent,
+            .bold = true,
+        });
+        return;
+    }
+
+    const InlineLine inline_line = render_inline(line);
+    lines.push_back(StyledLine{
+        .text = inline_line.text,
+        .foreground = inline_line.code
+            ? StyleColor::Accent
+            : StyleColor::Default,
+        .bold = inline_line.bold,
+    });
+}
+
+[[nodiscard]]
+std::vector<StyledLine> render_markdown_segment(std::string_view segment)
+{
+    std::vector<StyledLine> lines;
+    bool in_code = false;
+    std::size_t line_start = 0;
+    while (line_start < segment.size()) {
+        const std::size_t newline = segment.find('\n', line_start);
+        const std::size_t line_end = newline == std::string_view::npos
+            ? segment.size()
+            : newline;
+        const std::string_view line = segment.substr(
+            line_start, line_end - line_start
+        );
+        const FenceLine fence = fence_line(line);
+        if (in_code) {
+            if (fence.is_fence && fence.closes_fence) {
+                lines.push_back(StyledLine{
+                    .text = "  [code]",
+                    .foreground = StyleColor::Secondary,
+                    .bold = true,
+                });
+                in_code = false;
+            } else {
+                append_markdown_line(lines, line, true);
+            }
+        } else if (fence.is_fence) {
+            lines.push_back(StyledLine{
+                .text = fence.language.empty()
+                    ? "  [code]"
+                    : "  [code: " + fence.language + "]",
+                .foreground = StyleColor::Accent,
+                .bold = true,
+            });
+            in_code = true;
+        } else {
+            append_markdown_line(lines, line, false);
+        }
+
+        if (newline == std::string_view::npos) {
+            break;
+        }
+        line_start = newline + 1;
+    }
+    return lines;
+}
+
+[[nodiscard]]
+std::vector<StyledLine> render_inline_segment(std::string_view segment)
+{
+    std::vector<StyledLine> lines;
+    std::size_t line_start = 0;
+    while (line_start < segment.size()) {
+        const std::size_t newline = segment.find('\n', line_start);
+        const std::size_t line_end = newline == std::string_view::npos
+            ? segment.size()
+            : newline;
+        append_markdown_line(
+            lines,
+            segment.substr(line_start, line_end - line_start),
+            false
+        );
+        if (newline == std::string_view::npos) {
+            break;
+        }
+        line_start = newline + 1;
+    }
+    return lines;
+}
+
+[[nodiscard]]
+std::vector<StyledLine> render_plain_segment(std::string_view segment)
+{
+    std::vector<StyledLine> lines;
+    std::size_t line_start = 0;
+    while (line_start < segment.size()) {
+        const std::size_t newline = segment.find('\n', line_start);
+        const std::size_t line_end = newline == std::string_view::npos
+            ? segment.size()
+            : newline;
+        lines.push_back(StyledLine{
+            .text = std::string{
+                segment.substr(line_start, line_end - line_start)
+            },
+        });
+        if (newline == std::string_view::npos) {
+            break;
+        }
+        line_start = newline + 1;
+    }
+    return lines;
+}
+
+void append_lines(std::vector<StyledLine>& destination, std::vector<StyledLine> source)
+{
+    destination.insert(
+        destination.end(),
+        std::make_move_iterator(source.begin()),
+        std::make_move_iterator(source.end())
+    );
 }
 
 struct ToolStatusPresentation {
@@ -223,14 +451,121 @@ bool has_status_metadata(const StatusBarInput& status) noexcept
         || status.elapsed_seconds.has_value();
 }
 
+void append_projected_lines(
+    Frame& frame,
+    std::string_view prefix,
+    const std::vector<StyledLine>& lines
+)
+{
+    bool first = true;
+    for (const StyledLine& line : lines) {
+        StyledLine projected = line;
+        projected.text = (first ? std::string{prefix} : "  ") + line.text;
+        frame.lines.push_back(std::move(projected));
+        first = false;
+    }
+}
+
+void append_markdown_message(
+    Frame& frame,
+    const Message& message,
+    std::size_t message_index,
+    std::string_view prefix,
+    bool active_stream,
+    MarkdownMessageState& state
+)
+{
+    if (state.source.size() > message.text.size()
+        || message.text.compare(0, state.source.size(), state.source) != 0) {
+        state = MarkdownMessageState{};
+    }
+    state.source = message.text;
+
+    static_cast<void>(markdown::scan(message.text, state.scanner));
+    if (!active_stream) {
+        static_cast<void>(markdown::finish(message.text, state.scanner));
+    }
+
+    const std::size_t committed_length = state.scanner.last_boundary;
+    if (committed_length > state.committed_prefix.size()) {
+        const std::string_view new_prefix = std::string_view{message.text}.substr(
+            state.committed_prefix.size(),
+            committed_length - state.committed_prefix.size()
+        );
+        append_lines(
+            state.committed_lines,
+            render_markdown_segment(new_prefix)
+        );
+        state.committed_prefix = message.text.substr(0, committed_length);
+        ++state.committed_prefix_parse_count;
+    }
+
+    const std::string_view active_tail = std::string_view{message.text}.substr(
+        committed_length
+    );
+    std::vector<StyledLine> active_lines;
+    const bool pending_fence = state.scanner.line_prefix_is_fence
+        && state.scanner.fence_tick_count >= 3;
+    if (!active_tail.empty()) {
+        if (state.scanner.in_fence || pending_fence) {
+            active_lines = render_plain_segment(active_tail);
+        } else {
+            active_lines = render_inline_segment(active_tail);
+        }
+    }
+
+    frame.markdown_layers.push_back(MarkdownLayer{
+        .message_index = message_index,
+        .committed_prefix = state.committed_prefix,
+        .active_tail = std::string{active_tail},
+    });
+    append_projected_lines(frame, prefix, state.committed_lines);
+    if (!active_lines.empty()) {
+        append_projected_lines(
+            frame,
+            state.committed_lines.empty() ? prefix : "  ",
+            active_lines
+        );
+    }
+}
+
 }  // namespace
 
 Frame view(const Model& model, const UiState& ui, Size size)
 {
+    MarkdownState markdown_state;
+    return view(model, ui, size, markdown_state);
+}
+
+Frame view(
+    const Model& model,
+    const UiState& ui,
+    Size size,
+    MarkdownState& markdown_state
+)
+{
     Frame frame;
+    markdown_state.messages.resize(model.thread.messages.size());
+    const bool stream_active = std::holds_alternative<Streaming>(model.phase)
+        && !model.thread.messages.empty();
     for (const Message& message : model.thread.messages) {
+        const std::size_t message_index = static_cast<std::size_t>(
+            &message - model.thread.messages.data()
+        );
         const std::string_view prefix = speaker_prefix(message.role);
-        if (!message.text.empty()) {
+        const bool active_stream = stream_active
+            && message_index + 1 == model.thread.messages.size()
+            && message.role == Role::Assistant;
+        if (!message.text.empty() && message.role == Role::Assistant) {
+            append_markdown_message(
+                frame,
+                message,
+                message_index,
+                prefix,
+                active_stream,
+                markdown_state.messages.at(message_index)
+            );
+        } else if (!message.text.empty()) {
             frame.lines.push_back(StyledLine{
                 .text = std::string{prefix} + message.text,
             });

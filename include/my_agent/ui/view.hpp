@@ -1,6 +1,7 @@
 #pragma once
 
 #include "my_agent/runtime/model.hpp"
+#include "my_agent/ui/markdown_scanner.hpp"
 #include "my_agent/ui/status_bar.hpp"
 
 #include <cstddef>
@@ -38,9 +39,28 @@ struct CursorPosition {
     int column{0};
 };
 
+struct MarkdownLayer {
+    std::size_t message_index{0};
+    std::string committed_prefix;
+    std::string active_tail;
+};
+
+struct MarkdownMessageState {
+    std::string source;
+    markdown::ScanState scanner;
+    std::string committed_prefix;
+    std::vector<StyledLine> committed_lines;
+    std::size_t committed_prefix_parse_count{0};
+};
+
+struct MarkdownState {
+    std::vector<MarkdownMessageState> messages;
+};
+
 // 一整屏的内容。渲染层拿到它之后才去碰终端 —— Frame 本身不含任何转义序列。
 struct Frame {
     std::vector<StyledLine> lines;
+    std::vector<MarkdownLayer> markdown_layers;
     std::optional<CursorPosition> cursor;
     std::optional<StatusBar> status_bar;
     std::optional<std::size_t> status_bar_line;
@@ -49,5 +69,13 @@ struct Frame {
 // Model 的投影。纯函数：不碰终端、不碰时钟、不碰文件，因此可以脱离 tty 单测。
 [[nodiscard]]
 Frame view(const Model& model, const UiState& ui, Size size);
+
+[[nodiscard]]
+Frame view(
+    const Model& model,
+    const UiState& ui,
+    Size size,
+    MarkdownState& markdown_state
+);
 
 }  // namespace my_agent::ui
