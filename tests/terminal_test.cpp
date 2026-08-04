@@ -289,6 +289,24 @@ TEST(TerminalTest, RenderCommitsSuccessfulMayaFrameSoIdenticalFrameDoesNotRedraw
     EXPECT_EQ(std::string::npos, second.find(kSentinel)) << second;
 }
 
+TEST(TerminalTest, RendersTheFrameCursorAtTheInputPosition)
+{
+    PipeFds pipe;
+    ASSERT_TRUE(pipe.open());
+    ASSERT_TRUE(make_nonblocking(pipe.read_fd));
+
+    my_agent::ui::TerminalDriver driver{pipe.write_fd, pipe.write_fd};
+    const my_agent::ui::Frame frame{
+        .lines = {{.text = "input"}, {.text = "tail"}},
+        .cursor = my_agent::ui::CursorPosition{.row = 1, .column = 2},
+    };
+
+    ASSERT_TRUE(driver.render(frame));
+    const std::string bytes = read_available(pipe.read_fd);
+    EXPECT_NE(std::string::npos, bytes.find("\x1b[?25h")) << bytes;
+    EXPECT_NE(std::string::npos, bytes.find("\x1b[2;3H")) << bytes;
+}
+
 // 场景：Maya 已经算出这一帧，但输出 fd 当时写不进去。
 // 领域语义：write 失败时必须跳过 commit。否则 front_ 会前进到终端从没显示过的内容，
 // 清空管道后重试同一帧就会变成空 diff，哨兵永久丢失。

@@ -341,37 +341,26 @@ TEST(ViewTest, ShowsTheInputBufferOnTheLastLine)
     EXPECT_NE(std::string::npos, frame.lines.back().text.find("half-typed"));
 }
 
-// 场景：用户打的一行字超过了终端宽度。
-// 领域语义：输入缓冲属于 UiState，但显示宽度与裁剪不再属于 view。这里必须把完整
-// 输入交给 Maya；后续输入编辑器切片会在自己的模型里处理光标与多行布局。
-TEST(ViewTest, LeavesLongInputWholeForMayaLayout)
+TEST(ViewTest, WrapsLongInputAndCarriesTheCursorPosition)
 {
     const my_agent::Model model = model_with();
-    const std::string input = "0123456789012345678901234567890123456789abcdefXYZ";
-    const my_agent::ui::UiState ui{.input = input};
+    const my_agent::ui::UiState ui{
+        .input = "012345678901234567890123456789",
+        .cursor = 23,
+    };
 
     const my_agent::ui::Frame frame = my_agent::ui::view(
-        model, ui, my_agent::ui::Size{.columns = 20, .rows = 10}
+        model, ui, my_agent::ui::Size{.columns = 10, .rows = 10}
     );
 
-    ASSERT_FALSE(frame.lines.empty());
-    EXPECT_EQ("> " + input, frame.lines.back().text);
-}
-
-// 场景：终端窄到连提示符都放不下。
-// 领域语义：极窄终端的失败方式由 Maya 的 cell renderer 约束；view 仍只保留完整
-// 输入文本，不能为了 1 列终端在这里切掉 UTF-8 内容。
-TEST(ViewTest, LeavesNarrowInputWholeForMayaLayout)
-{
-    const my_agent::Model model = model_with();
-    const my_agent::ui::UiState ui{.input = "输入"};
-
-    const my_agent::ui::Frame frame = my_agent::ui::view(
-        model, ui, my_agent::ui::Size{.columns = 1, .rows = 10}
-    );
-
-    ASSERT_FALSE(frame.lines.empty());
-    EXPECT_EQ("> 输入", frame.lines.back().text);
+    ASSERT_EQ(4u, frame.lines.size());
+    EXPECT_EQ("> 01234567", frame.lines[0].text);
+    EXPECT_EQ("8901234567", frame.lines[1].text);
+    EXPECT_EQ("8901234567", frame.lines[2].text);
+    EXPECT_EQ("89", frame.lines[3].text);
+    ASSERT_TRUE(frame.cursor.has_value());
+    EXPECT_EQ(8, frame.cursor->row);
+    EXPECT_EQ(5, frame.cursor->column);
 }
 
 // 场景：Ollama 连不上，StreamError 落在消息的 error 字段上。

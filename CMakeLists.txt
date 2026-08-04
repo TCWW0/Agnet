@@ -595,6 +595,7 @@ target_link_libraries(
     my_agent_ui_view
     PUBLIC
         my_agent_core
+        my_agent_ui_input_layout
 )
 
 add_executable(
@@ -681,6 +682,7 @@ target_link_libraries(
     PUBLIC
         my_agent_async_runtime
         my_agent_ui_clock
+        my_agent_ui_input_editor
         my_agent_ui_input
         my_agent_ui_terminal
 )
@@ -751,6 +753,78 @@ target_link_libraries(
 gtest_discover_tests(
     input_test
     TEST_PREFIX "input."
+)
+
+add_library(
+    my_agent_ui_input_editor
+    src/ui/input_editor.cpp
+)
+
+target_include_directories(
+    my_agent_ui_input_editor
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_ui_input_editor
+    PUBLIC cxx_std_26
+)
+
+target_link_libraries(
+    my_agent_ui_input_editor
+    PUBLIC
+        my_agent_ui_input
+)
+
+add_executable(
+    input_editor_test
+    tests/input_editor_test.cpp
+)
+
+target_link_libraries(
+    input_editor_test
+    PRIVATE
+        my_agent_ui_input_editor
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    input_editor_test
+    TEST_PREFIX "input_editor."
+)
+
+add_library(
+    my_agent_ui_input_layout
+    src/ui/input_layout.cpp
+)
+
+target_include_directories(
+    my_agent_ui_input_layout
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_ui_input_layout
+    PUBLIC cxx_std_26
+)
+
+add_executable(
+    input_layout_test
+    tests/input_layout_test.cpp
+)
+
+target_link_libraries(
+    input_layout_test
+    PRIVATE
+        my_agent_ui_input_layout
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    input_layout_test
+    TEST_PREFIX "input_layout."
 )
 
 # TUI 帧率合并：纯判定，时间由调用方注入，因此可确定性测试而无需 sleep。

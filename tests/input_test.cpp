@@ -73,7 +73,7 @@ TEST(InputTest, DiscardsUnsupportedEscapeSequencesInsteadOfShowingGarbage)
 {
     my_agent::ui::InputDecoder decoder;
 
-    const std::vector<my_agent::ui::Key> keys = decoder.feed("a\x1b[Ab");
+    const std::vector<my_agent::ui::Key> keys = decoder.feed("a\x1b[1;2Ab");
 
     ASSERT_EQ(2u, keys.size());
     EXPECT_EQ("a", keys[0].text);
@@ -90,13 +90,31 @@ TEST(InputTest, KeepsAnIncompleteEscapeSequenceAcrossReadBoundaries)
 {
     my_agent::ui::InputDecoder decoder;
 
-    const std::vector<my_agent::ui::Key> first = decoder.feed("a\x1b[");
+    const std::vector<my_agent::ui::Key> first = decoder.feed("a\x1b[1;2");
     ASSERT_EQ(1u, first.size());
     EXPECT_EQ("a", first[0].text);  // ESC [ 留在缓冲里，没当成文本
 
     const std::vector<my_agent::ui::Key> second = decoder.feed("Ab");
     ASSERT_EQ(1u, second.size());
     EXPECT_EQ("b", second[0].text);  // 序列到齐后整段丢弃，只剩 b
+}
+
+TEST(InputTest, DecodesCursorMovementEscapeSequences)
+{
+    my_agent::ui::InputDecoder decoder;
+    const std::vector<my_agent::ui::Key> keys = decoder.feed(
+        "\x1b[D\x1b[C\x1b[A\x1b[B\x1b[H\x1b[F\x1b[1~\x1b[4~"
+    );
+
+    ASSERT_EQ(8u, keys.size());
+    EXPECT_EQ(my_agent::ui::Key::Kind::Left, keys[0].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::Right, keys[1].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::Up, keys[2].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::Down, keys[3].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::Home, keys[4].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::End, keys[5].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::Home, keys[6].kind);
+    EXPECT_EQ(my_agent::ui::Key::Kind::End, keys[7].kind);
 }
 
 }  // namespace

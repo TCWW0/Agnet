@@ -109,6 +109,30 @@ TEST(UiLoopTest, BackspaceOnAnEmptyInputLineIsANoOp)
     EXPECT_TRUE(ui.input.empty());
 }
 
+TEST(UiLoopTest, CursorKeysEditTheInputWithoutCrossingIntoTheDomain)
+{
+    UiState ui{.input = "hello", .cursor = 2};
+    const my_agent::Model model;
+
+    const KeyOutcome moved_right = apply_key(
+        Key{.kind = Key::Kind::Right}, ui, model
+    );
+    EXPECT_FALSE(moved_right.msg.has_value());
+    EXPECT_EQ(3u, ui.cursor);
+
+    const KeyOutcome moved_home = apply_key(
+        Key{.kind = Key::Kind::Home}, ui, model
+    );
+    EXPECT_FALSE(moved_home.msg.has_value());
+    EXPECT_EQ(0u, ui.cursor);
+
+    const KeyOutcome moved_end = apply_key(
+        Key{.kind = Key::Kind::End}, ui, model
+    );
+    EXPECT_FALSE(moved_end.msg.has_value());
+    EXPECT_EQ(5u, ui.cursor);
+}
+
 // 场景：空输入行上按回车。
 // 领域语义：不该发一条空的 Submit —— 那会让模型收到一条空用户消息，浪费一次
 // 往返，而且有些 provider 会直接报错。回车在空行上应该什么都不做。

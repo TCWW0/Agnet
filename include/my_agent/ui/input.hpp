@@ -12,6 +12,12 @@ struct Key {
         Text,
         Enter,
         Backspace,
+        Left,
+        Right,
+        Up,
+        Down,
+        Home,
+        End,
         Interrupt,  // Ctrl-C
         Eof,        // Ctrl-D
     };

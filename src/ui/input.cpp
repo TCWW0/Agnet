@@ -1,6 +1,7 @@
 #include "my_agent/ui/input.hpp"
 
 #include <cstddef>
+#include <optional>
 
 namespace my_agent::ui {
 
@@ -48,25 +49,63 @@ Key::Kind control_kind(unsigned char byte) noexcept
     }
 }
 
-// 跳过一段未支持的转义序列，返回消耗的字节数；0 表示还没到齐、留到下次。
-// 只需要认出**边界**而不是解析内容：CSI（ESC [ ... 终结符 0x40..0x7E）与
-// 两字节序列（ESC + 一个字符）覆盖了方向键、Home/End、功能键。
+struct EscapeResult {
+    std::size_t consumed{0};
+    std::optional<Key::Kind> kind;
+};
+
 [[nodiscard]]
-std::size_t skip_escape(std::string_view text) noexcept
+std::optional<Key::Kind> escape_kind(std::string_view sequence) noexcept
+{
+    if (sequence == "A") {
+        return Key::Kind::Up;
+    }
+    if (sequence == "B") {
+        return Key::Kind::Down;
+    }
+    if (sequence == "C") {
+        return Key::Kind::Right;
+    }
+    if (sequence == "D") {
+        return Key::Kind::Left;
+    }
+    if (sequence == "H" || sequence == "1~" || sequence == "7~") {
+        return Key::Kind::Home;
+    }
+    if (sequence == "F" || sequence == "4~" || sequence == "8~") {
+        return Key::Kind::End;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]]
+EscapeResult decode_escape(std::string_view text) noexcept
 {
     if (text.size() < 2) {
-        return 0;
+        return {};
     }
     if (text[1] != '[' && text[1] != 'O') {
-        return 2;  // ESC + 单字符
+        return EscapeResult{.consumed = 2};
+    }
+    if (text[1] == 'O') {
+        if (text.size() < 3) {
+            return {};
+        }
+        return EscapeResult{
+            .consumed = 3,
+            .kind = escape_kind(text.substr(2, 1)),
+        };
     }
     for (std::size_t index = 2; index < text.size(); ++index) {
         const auto byte = static_cast<unsigned char>(text[index]);
         if (byte >= 0x40 && byte <= 0x7E) {
-            return index + 1;  // 终结符
+            return EscapeResult{
+                .consumed = index + 1,
+                .kind = escape_kind(text.substr(2, index - 1)),
+            };
         }
     }
-    return 0;  // 终结符还没到
+    return {};
 }
 
 }  // namespace
@@ -81,13 +120,16 @@ std::vector<Key> InputDecoder::feed(std::string_view bytes)
         const auto lead = static_cast<unsigned char>(buffer_[offset]);
 
         if (lead == 0x1b) {  // ESC：转义序列的开头
-            const std::size_t consumed = skip_escape(
+            const EscapeResult escape = decode_escape(
                 std::string_view{buffer_}.substr(offset)
             );
-            if (consumed == 0) {
+            if (escape.consumed == 0) {
                 break;  // 序列还没到齐，留到下一次 feed
             }
-            offset += consumed;
+            if (escape.kind) {
+                keys.push_back(Key{.kind = *escape.kind});
+            }
+            offset += escape.consumed;
             continue;  // 本切片不支持方向键等，整段丢弃而不是当文本显示
         }
 

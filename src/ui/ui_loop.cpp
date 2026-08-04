@@ -1,5 +1,6 @@
 #include "my_agent/ui/ui_loop.hpp"
 
+#include "my_agent/ui/input_editor.hpp"
 #include "my_agent/ui/repaint_clock.hpp"
 #include "my_agent/ui/resize_watch.hpp"
 
@@ -44,8 +45,20 @@ KeyOutcome apply_key(const Key& key, UiState& ui, const Model& model)
 
     switch (key.kind) {
         case Key::Kind::Text:
-            ui.input += key.text;
+        case Key::Kind::Backspace:
+        case Key::Kind::Left:
+        case Key::Kind::Right:
+        case Key::Kind::Up:
+        case Key::Kind::Down:
+        case Key::Kind::Home:
+        case Key::Kind::End: {
+            InputEditorState state = edit_input(
+                std::move(ui.input), ui.cursor, key
+            );
+            ui.input = std::move(state.buffer);
+            ui.cursor = state.cursor;
             return {};
+        }
 
         case Key::Kind::Enter: {
             // 空行不发 Submit：模型会收到一条空用户消息，白跑一次往返，
@@ -55,20 +68,9 @@ KeyOutcome apply_key(const Key& key, UiState& ui, const Model& model)
             }
             Msg msg = Submit{.text = ui.input};
             ui.input.clear();  // 不清会让下一句带着上一句的残留
+            ui.cursor = 0;
             return KeyOutcome{.msg = std::move(msg)};
         }
-
-        case Key::Kind::Backspace:
-            // 往前退到字符边界（续字节高两位是 10）。按字节删会在输入行里留下
-            // 残缺字节，显示成乱码方块，而且再按一次也删不干净。
-            while (!ui.input.empty()) {
-                const auto byte = static_cast<unsigned char>(ui.input.back());
-                ui.input.pop_back();
-                if ((byte & 0xC0) != 0x80) {
-                    break;  // 删到前导字节为止
-                }
-            }
-            return {};
 
         case Key::Kind::Eof:
         case Key::Kind::Interrupt:

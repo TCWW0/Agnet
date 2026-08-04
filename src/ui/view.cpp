@@ -1,6 +1,8 @@
 #include "my_agent/ui/view.hpp"
+#include "my_agent/ui/input_layout.hpp"
 #include "my_agent/tool/tool.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -208,7 +210,7 @@ std::string status_line(const Model& model)
 
 }  // namespace
 
-Frame view(const Model& model, const UiState& ui, Size /*size*/)
+Frame view(const Model& model, const UiState& ui, Size size)
 {
     Frame frame;
     for (const Message& message : model.thread.messages) {
@@ -236,11 +238,30 @@ Frame view(const Model& model, const UiState& ui, Size /*size*/)
         frame.lines.push_back(StyledLine{.text = status});
     }
 
-    // 输入行放最后：光标要落在这里。显示列折行与裁剪属于 Maya/后续输入编辑器，
-    // view 只保留 UiState 里的完整文本。
-    frame.lines.push_back(StyledLine{
-        .text = std::string{kInputPrompt} + ui.input,
-    });
+    const InputLayout input = layout_input(ui.input, ui.cursor, size.columns);
+    for (const std::string& line : input.lines) {
+        frame.lines.push_back(StyledLine{.text = line});
+    }
+
+    const int row_count = size.rows > 0 ? size.rows : 1;
+    const std::size_t input_rows = input.lines.size();
+    const std::size_t visible_input_rows = std::min<std::size_t>(
+        input_rows, static_cast<std::size_t>(row_count)
+    );
+    const std::size_t first_visible_input_row = input_rows > visible_input_rows
+        ? input_rows - visible_input_rows
+        : 0;
+    const std::size_t visible_cursor_line =
+        input.cursor_line >= first_visible_input_row
+        ? input.cursor_line - first_visible_input_row
+        : 0;
+    frame.cursor = CursorPosition{
+        .row = row_count - static_cast<int>(visible_input_rows)
+            + static_cast<int>(std::min<std::size_t>(
+                visible_cursor_line, visible_input_rows - 1
+            )),
+        .column = input.cursor_column,
+    };
     return frame;
 }
 

@@ -6,6 +6,7 @@
 #include <maya/style/theme.hpp>
 
 #include <atomic>
+#include <algorithm>
 #include <cerrno>
 #include <csignal>
 #include <cstddef>
@@ -145,6 +146,18 @@ bool TerminalDriver::render(const Frame& frame) noexcept
     if (framebuffer_->width() != current_size.columns
         || framebuffer_->height() != current_size.rows) {
         framebuffer_->resize(current_size.columns, current_size.rows);
+    }
+
+    const int max_column = std::max(0, current_size.columns - 1);
+    const int max_row = std::max(0, current_size.rows - 1);
+    if (frame.cursor) {
+        framebuffer_->set_cursor(maya::Position{
+            maya::Columns{std::clamp(frame.cursor->column, 0, max_column)},
+            maya::Rows{std::clamp(frame.cursor->row, 0, max_row)},
+        });
+        framebuffer_->set_cursor_visible(true);
+    } else {
+        framebuffer_->set_cursor_visible(false);
     }
 
     const maya::Theme& theme = maya::theme::dark;

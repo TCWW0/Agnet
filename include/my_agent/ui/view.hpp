@@ -2,6 +2,8 @@
 
 #include "my_agent/runtime/model.hpp"
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -17,6 +19,7 @@ struct Size {
 // 东西，只在提交时看到一条完整的 Submit。
 struct UiState {
     std::string input;
+    std::size_t cursor{std::string::npos};
 };
 
 // Semantic style slots owned by this project. Keep Maya types out of the pure
@@ -46,9 +49,15 @@ struct StyledLine {
     bool dim{false};
 };
 
+struct CursorPosition {
+    int row{0};
+    int column{0};
+};
+
 // 一整屏的内容。渲染层拿到它之后才去碰终端 —— Frame 本身不含任何转义序列。
 struct Frame {
     std::vector<StyledLine> lines;
+    std::optional<CursorPosition> cursor;
 };
 
 // Model 的投影。纯函数：不碰终端、不碰时钟、不碰文件，因此可以脱离 tty 单测。
