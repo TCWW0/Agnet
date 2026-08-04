@@ -4,6 +4,7 @@
 #include <chrono>
 #include <csignal>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <variant>
 
@@ -456,6 +457,212 @@ TEST(UiLoopTest, ReflowsOnTerminalResizeWithoutWaitingForAKeypress)
 
     ::close(replica);
     ::close(primary);
+}
+
+TEST(UiLoopTest, ApprovesARealToolCallThroughThePtyAndShowsItsDetails)
+{
+    constexpr std::string_view kArgumentSentinel = "PTY_APPROVAL_ARG_7F3A";
+    constexpr std::string_view kContinuationSentinel = "PTY_APPROVAL_CONT_9B2E";
+
+    int primary = -1;
+    int replica = -1;
+    if (::openpty(&primary, &replica, nullptr, nullptr, nullptr) != 0) {
+        GTEST_SKIP() << "openpty unavailable in this environment";
+    }
+
+    std::atomic<int> stream_calls{0};
+    std::atomic<bool> received_expected_args{false};
+    my_agent::StreamEffect fake_stream =
+        [&stream_calls, kArgumentSentinel, kContinuationSentinel](
+            my_agent::Request, my_agent::EventSink sink
+        ) {
+            if (stream_calls.fetch_add(1, std::memory_order_acq_rel) == 0) {
+                sink(my_agent::Msg{my_agent::StreamToolCall{
+                    .id = "pty-approval-call",
+                    .name = "read",
+                    .args = nlohmann::json{
+                        {"path", std::string{kArgumentSentinel}},
+                    },
+                }});
+            } else {
+                sink(my_agent::Msg{my_agent::StreamTextDelta{
+                    .text = std::string{kContinuationSentinel},
+                }});
+            }
+            sink(my_agent::Msg{my_agent::StreamFinished{}});
+        };
+    my_agent::ToolExecEffect fake_tool =
+        [&received_expected_args, kArgumentSentinel](
+            std::string_view name, const nlohmann::json& args
+        ) -> my_agent::tool::ExecResult {
+            if (name == "read"
+                && args.value("path", std::string{})
+                    == std::string{kArgumentSentinel}) {
+                received_expected_args.store(true, std::memory_order_release);
+            }
+            return my_agent::tool::ToolOutput{
+                .text = "PTY_APPROVAL_OUTPUT_4C8D",
+            };
+        };
+
+    my_agent::AsyncHost host{std::move(fake_stream), std::move(fake_tool)};
+    host.dispatch(my_agent::Msg{
+        my_agent::SetProfile{.profile = my_agent::Profile::Minimal},
+    });
+
+    std::thread ui_thread{[&host, replica] {
+        my_agent::ui::TerminalDriver terminal{replica, replica};
+        static_cast<void>(my_agent::ui::run_ui(host, terminal));
+    }};
+
+    std::string seen;
+    const auto read_until = [&seen, primary](std::string_view needle) {
+        const auto deadline = std::chrono::steady_clock::now()
+            + std::chrono::seconds{5};
+        while (std::chrono::steady_clock::now() < deadline
+               && seen.find(needle) == std::string::npos) {
+            pollfd probe{.fd = primary, .events = POLLIN, .revents = 0};
+            if (::poll(&probe, 1, 200) > 0) {
+                char buffer[4096];
+                const ssize_t count = ::read(primary, buffer, sizeof(buffer));
+                if (count > 0) {
+                    seen.append(buffer, static_cast<std::size_t>(count));
+                }
+            }
+        }
+        return seen.find(needle) != std::string::npos;
+    };
+    const auto stop = [&] {
+        const char eof = 0x04;
+        static_cast<void>(::write(primary, &eof, 1));
+        ui_thread.join();
+        host.shutdown();
+        ::close(replica);
+        ::close(primary);
+    };
+
+    if (!read_until("\x1b[?1049h")) {
+        ADD_FAILURE() << "driver did not enter the alternate screen";
+        stop();
+        return;
+    }
+    EXPECT_EQ(std::string::npos, seen.find(kArgumentSentinel));
+    EXPECT_EQ(std::string::npos, seen.find(kContinuationSentinel));
+
+    const std::string typed = "request approval\r";
+    EXPECT_EQ(static_cast<ssize_t>(typed.size()),
+              ::write(primary, typed.data(), typed.size()));
+    EXPECT_TRUE(read_until("allow read"));
+    EXPECT_NE(std::string::npos, seen.find("effect=read_fs"));
+    EXPECT_NE(std::string::npos, seen.find(kArgumentSentinel));
+
+    const char approve = 'y';
+    EXPECT_EQ(1, ::write(primary, &approve, 1));
+    EXPECT_TRUE(read_until(kContinuationSentinel));
+    EXPECT_NE(std::string::npos, seen.find("[done]"));
+    EXPECT_TRUE(received_expected_args.load(std::memory_order_acquire));
+
+    stop();
+}
+
+TEST(UiLoopTest, RejectsARealToolCallThroughThePtyWithoutExecutingIt)
+{
+    constexpr std::string_view kArgumentSentinel = "PTY_REJECTION_ARG_6D1E";
+    constexpr std::string_view kContinuationSentinel = "PTY_REJECTION_CONT_8A4C";
+
+    int primary = -1;
+    int replica = -1;
+    if (::openpty(&primary, &replica, nullptr, nullptr, nullptr) != 0) {
+        GTEST_SKIP() << "openpty unavailable in this environment";
+    }
+
+    std::atomic<int> stream_calls{0};
+    std::atomic<bool> tool_executed{false};
+    my_agent::StreamEffect fake_stream =
+        [&stream_calls, kArgumentSentinel, kContinuationSentinel](
+            my_agent::Request, my_agent::EventSink sink
+        ) {
+            if (stream_calls.fetch_add(1, std::memory_order_acq_rel) == 0) {
+                sink(my_agent::Msg{my_agent::StreamToolCall{
+                    .id = "pty-rejection-call",
+                    .name = "read",
+                    .args = nlohmann::json{
+                        {"path", std::string{kArgumentSentinel}},
+                    },
+                }});
+            } else {
+                sink(my_agent::Msg{my_agent::StreamTextDelta{
+                    .text = std::string{kContinuationSentinel},
+                }});
+            }
+            sink(my_agent::Msg{my_agent::StreamFinished{}});
+        };
+    my_agent::ToolExecEffect fake_tool =
+        [&tool_executed](std::string_view, const nlohmann::json&)
+            -> my_agent::tool::ExecResult {
+            tool_executed.store(true, std::memory_order_release);
+            return my_agent::tool::ToolOutput{
+                .text = "PTY_REJECTION_OUTPUT_5E7B",
+            };
+        };
+
+    my_agent::AsyncHost host{std::move(fake_stream), std::move(fake_tool)};
+    host.dispatch(my_agent::Msg{
+        my_agent::SetProfile{.profile = my_agent::Profile::Minimal},
+    });
+
+    std::thread ui_thread{[&host, replica] {
+        my_agent::ui::TerminalDriver terminal{replica, replica};
+        static_cast<void>(my_agent::ui::run_ui(host, terminal));
+    }};
+
+    std::string seen;
+    const auto read_until = [&seen, primary](std::string_view needle) {
+        const auto deadline = std::chrono::steady_clock::now()
+            + std::chrono::seconds{5};
+        while (std::chrono::steady_clock::now() < deadline
+               && seen.find(needle) == std::string::npos) {
+            pollfd probe{.fd = primary, .events = POLLIN, .revents = 0};
+            if (::poll(&probe, 1, 200) > 0) {
+                char buffer[4096];
+                const ssize_t count = ::read(primary, buffer, sizeof(buffer));
+                if (count > 0) {
+                    seen.append(buffer, static_cast<std::size_t>(count));
+                }
+            }
+        }
+        return seen.find(needle) != std::string::npos;
+    };
+    const auto stop = [&] {
+        const char eof = 0x04;
+        static_cast<void>(::write(primary, &eof, 1));
+        ui_thread.join();
+        host.shutdown();
+        ::close(replica);
+        ::close(primary);
+    };
+
+    if (!read_until("\x1b[?1049h")) {
+        ADD_FAILURE() << "driver did not enter the alternate screen";
+        stop();
+        return;
+    }
+    EXPECT_EQ(std::string::npos, seen.find(kArgumentSentinel));
+    EXPECT_EQ(std::string::npos, seen.find(kContinuationSentinel));
+
+    const std::string typed = "request rejection\r";
+    EXPECT_EQ(static_cast<ssize_t>(typed.size()),
+              ::write(primary, typed.data(), typed.size()));
+    EXPECT_TRUE(read_until("allow read"));
+    EXPECT_NE(std::string::npos, seen.find(kArgumentSentinel));
+
+    const char reject = 'n';
+    EXPECT_EQ(1, ::write(primary, &reject, 1));
+    EXPECT_TRUE(read_until(kContinuationSentinel));
+    EXPECT_NE(std::string::npos, seen.find("[rejected]"));
+    EXPECT_FALSE(tool_executed.load(std::memory_order_acquire));
+
+    stop();
 }
 
 }  // namespace
