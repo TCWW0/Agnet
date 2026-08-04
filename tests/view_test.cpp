@@ -131,6 +131,46 @@ TEST(ViewTest, ShowsWorkInFlightWhileStreaming)
     EXPECT_FALSE(streaming.lines.back().text.empty());
 }
 
+TEST(ViewTest, ProjectsStatusBarMetadataAlongsideTheActivePhase)
+{
+    my_agent::Model model = model_with({
+        {.role = my_agent::Role::User, .text = "hello"},
+        {.role = my_agent::Role::Assistant, .text = ""},
+    });
+    model.phase = my_agent::Streaming{};
+
+    my_agent::ui::UiState ui;
+    ui.status.model_name = "qwen3.5:latest";
+    ui.status.context_used = 4096;
+    ui.status.context_limit = 8192;
+    ui.status.tokens_per_second = 12.5;
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, ui, my_agent::ui::Size{.columns = 80, .rows = 10}
+    );
+
+    ASSERT_TRUE(frame.status_bar.has_value());
+    ASSERT_TRUE(frame.status_bar_line.has_value());
+    EXPECT_EQ(frame.lines.at(*frame.status_bar_line).text,
+              my_agent::ui::plain_status_text(*frame.status_bar));
+    EXPECT_NE(
+        std::string::npos,
+        frame.lines.at(*frame.status_bar_line).text.find("thinking")
+    );
+    EXPECT_NE(
+        std::string::npos,
+        frame.lines.at(*frame.status_bar_line).text.find("qwen3.5:latest")
+    );
+    EXPECT_NE(
+        std::string::npos,
+        frame.lines.at(*frame.status_bar_line).text.find("12.5")
+    );
+    EXPECT_NE(
+        std::string::npos,
+        frame.lines.at(*frame.status_bar_line).text.find("4096/8192")
+    );
+}
+
 // 场景：一个待审批的工具调用停在 AwaitingPermission。
 // 领域语义：审批的前提是知道自己在批什么。Model 里 PendingPermission 只存一个 id，
 // 工具名和参数在最后一条消息的 tool_calls 里 —— 把 id 解析成人类可读的描述正是

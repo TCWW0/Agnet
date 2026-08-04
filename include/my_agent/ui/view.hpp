@@ -1,6 +1,7 @@
 #pragma once
 
 #include "my_agent/runtime/model.hpp"
+#include "my_agent/ui/status_bar.hpp"
 
 #include <cstddef>
 #include <optional>
@@ -20,24 +21,7 @@ struct Size {
 struct UiState {
     std::string input;
     std::size_t cursor{std::string::npos};
-};
-
-// Semantic style slots owned by this project. Keep Maya types out of the pure
-// Frame IR so existing view tests can stay text-focused.
-enum class StyleColor {
-    Default,
-    Text,
-    Muted,
-    Primary,
-    Secondary,
-    Accent,
-    Success,
-    Error,
-    Warning,
-    Info,
-    Surface,
-    Background,
-    Border,
+    StatusBarInput status;
 };
 
 // 一行待渲染文本。样式字段属于自有中间表示；Maya 只在下一层机械转换时出现。
@@ -58,6 +42,8 @@ struct CursorPosition {
 struct Frame {
     std::vector<StyledLine> lines;
     std::optional<CursorPosition> cursor;
+    std::optional<StatusBar> status_bar;
+    std::optional<std::size_t> status_bar_line;
 };
 
 // Model 的投影。纯函数：不碰终端、不碰时钟、不碰文件，因此可以脱离 tty 单测。

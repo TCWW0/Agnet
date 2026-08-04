@@ -596,6 +596,40 @@ target_link_libraries(
     PUBLIC
         my_agent_core
         my_agent_ui_input_layout
+        my_agent_ui_status_bar
+)
+
+add_library(
+    my_agent_ui_status_bar
+    src/ui/status_bar.cpp
+)
+
+target_include_directories(
+    my_agent_ui_status_bar
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_ui_status_bar
+    PUBLIC cxx_std_26
+)
+
+add_executable(
+    status_bar_test
+    tests/status_bar_test.cpp
+)
+
+target_link_libraries(
+    status_bar_test
+    PRIVATE
+        my_agent_ui_status_bar
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    status_bar_test
+    TEST_PREFIX "status_bar."
 )
 
 add_executable(

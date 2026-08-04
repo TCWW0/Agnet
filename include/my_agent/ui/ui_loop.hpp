@@ -7,6 +7,7 @@
 #include "my_agent/ui/terminal.hpp"
 #include "my_agent/ui/view.hpp"
 
+#include <functional>
 #include <optional>
 
 namespace my_agent::ui {
@@ -28,5 +29,13 @@ KeyOutcome apply_key(const Key& key, UiState& ui, const Model& model);
 // 这是 run_until_quiescent 做不到的（它在 phase 是 Streaming 时不返回）。
 // 非 tty 时立即返回 false，调用方回退到行式 REPL。
 bool run_ui(AsyncHost& host, TerminalDriver& terminal);
+
+using StatusProvider = std::function<StatusBarInput()>;
+
+bool run_ui(
+    AsyncHost& host,
+    TerminalDriver& terminal,
+    StatusProvider status_provider
+);
 
 }  // namespace my_agent::ui

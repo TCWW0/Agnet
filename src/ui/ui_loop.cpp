@@ -88,6 +88,15 @@ KeyOutcome apply_key(const Key& key, UiState& ui, const Model& model)
 
 bool run_ui(AsyncHost& host, TerminalDriver& terminal)
 {
+    return run_ui(host, terminal, {});
+}
+
+bool run_ui(
+    AsyncHost& host,
+    TerminalDriver& terminal,
+    StatusProvider status_provider
+)
+{
     if (!terminal.is_tty()) {
         return false;  // 调用方回退到行式 REPL
     }
@@ -98,8 +107,15 @@ bool run_ui(AsyncHost& host, TerminalDriver& terminal)
     // 作用域绑在循环上：处理器随 run_ui 返回而摘掉，不给非 tty 回退路径留残留。
     ResizeWatch resize;
 
+    const auto refresh_status = [&ui, &status_provider] {
+        if (status_provider) {
+            ui.status = status_provider();
+        }
+    };
+
     // 开局先画一帧：否则屏幕在用户敲第一个键之前是空的。
     static_cast<void>(clock.should_paint(RepaintClock::Clock::now()));
+    refresh_status();
     static_cast<void>(terminal.render(view(host.model(), ui, terminal.size())));
 
     const int wake_fd = host.wake_fd();
@@ -118,6 +134,7 @@ bool run_ui(AsyncHost& host, TerminalDriver& terminal)
         host.drain_inbox();
 
         if (clock.should_paint(RepaintClock::Clock::now())) {
+            refresh_status();
             static_cast<void>(terminal.render(view(host.model(), ui, terminal.size())));
         }
 

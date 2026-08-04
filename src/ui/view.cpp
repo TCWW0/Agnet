@@ -173,39 +173,54 @@ void append_tool_call(Frame& frame, const ToolCall& call)
 // 提示必须不依赖已到达的文本：第一个 token 到达之前它就得在屏幕上，
 // 否则用户分不清模型在想还是进程卡死了。
 [[nodiscard]]
-std::string status_line(const Model& model)
+StatusPhase status_phase(const Model& model) noexcept
+{
+    return std::visit(
+        [](const auto& value) noexcept -> StatusPhase {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, Streaming>) {
+                return StatusPhase::Streaming;
+            } else if constexpr (std::is_same_v<T, ExecutingTool>) {
+                return StatusPhase::ExecutingTool;
+            } else if constexpr (std::is_same_v<T, AwaitingPermission>) {
+                return StatusPhase::AwaitingPermission;
+            } else {
+                return StatusPhase::Idle;
+            }
+        },
+        model.phase
+    );
+}
+
+[[nodiscard]]
+std::string status_tool_name(const Model& model)
 {
     return std::visit(
         [&model](const auto& value) -> std::string {
             using T = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<T, Streaming>) {
-                return "... thinking";
-            } else if constexpr (std::is_same_v<T, ExecutingTool>) {
-                return "... running " + tool_name_for(model, value.id);
+            if constexpr (std::is_same_v<T, ExecutingTool>) {
+                return tool_name_for(model, value.id);
             } else if constexpr (std::is_same_v<T, AwaitingPermission>) {
                 if (!model.pending_permission) {
-                    return "allow tool? [y/n]";
+                    return {};
                 }
-                const ToolCall* call = tool_call_for(
-                    model, model.pending_permission->id
-                );
-                const std::string name = call
-                    ? call->name
-                    : model.pending_permission->id;
-                const tool::ToolDef* definition = tool::find(name);
-                const tool::EffectSet effects = definition
-                    ? definition->effects
-                    : tool::EffectSet{};
-                const std::string args = call ? call->args.dump() : "{}";
-                return "allow " + name
-                    + "? effect=" + effect_label(effects)
-                    + " args: " + args + " [y/n]";
+                return tool_name_for(model, model.pending_permission->id);
             } else {
                 return {};
             }
         },
         model.phase
     );
+}
+
+[[nodiscard]]
+bool has_status_metadata(const StatusBarInput& status) noexcept
+{
+    return !status.model_name.empty()
+        || status.context_used.has_value()
+        || status.context_limit.has_value()
+        || status.tokens_per_second.has_value()
+        || status.elapsed_seconds.has_value();
 }
 
 }  // namespace
@@ -234,8 +249,32 @@ Frame view(const Model& model, const UiState& ui, Size size)
         }
     }
 
-    if (const std::string status = status_line(model); !status.empty()) {
-        frame.lines.push_back(StyledLine{.text = status});
+    StatusBarInput status = ui.status;
+    status.phase = status_phase(model);
+    status.tool_name = status_tool_name(model);
+    status.permission_effect.clear();
+    status.permission_args.clear();
+    if (status.phase == StatusPhase::AwaitingPermission
+        && model.pending_permission) {
+        const ToolCall* call = tool_call_for(
+            model, model.pending_permission->id
+        );
+        const std::string name = call
+            ? call->name
+            : model.pending_permission->id;
+        const tool::ToolDef* definition = tool::find(name);
+        status.permission_effect = definition
+            ? effect_label(definition->effects)
+            : "none";
+        status.permission_args = call ? call->args.dump() : "{}";
+    }
+    if (status.phase != StatusPhase::Idle || has_status_metadata(status)) {
+        frame.status_bar = build_status_bar(status);
+        frame.status_bar_line = frame.lines.size();
+        frame.lines.push_back(StyledLine{
+            .text = plain_status_text(*frame.status_bar),
+            .foreground = StyleColor::Muted,
+        });
     }
 
     const InputLayout input = layout_input(ui.input, ui.cursor, size.columns);

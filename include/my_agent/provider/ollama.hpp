@@ -4,10 +4,38 @@
 #include "my_agent/provider/provider.hpp"
 
 #include <memory>
+#include <atomic>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
 namespace my_agent::provider::ollama {
+
+class StreamStats {
+public:
+    struct Snapshot {
+        bool available{false};
+        std::uint64_t prompt_eval_count{0};
+        std::uint64_t eval_count{0};
+        double eval_duration_seconds{0.0};
+        double tokens_per_second{0.0};
+    };
+
+    void record(
+        std::uint64_t prompt_eval_count,
+        std::uint64_t eval_count,
+        std::uint64_t eval_duration_nanoseconds
+    ) noexcept;
+
+    [[nodiscard]]
+    Snapshot snapshot() const noexcept;
+
+private:
+    std::atomic<bool> available_{false};
+    std::atomic<std::uint64_t> prompt_eval_count_{0};
+    std::atomic<std::uint64_t> eval_count_{0};
+    std::atomic<std::uint64_t> eval_duration_nanoseconds_{0};
+};
 
 // Ollama /api/chat 的响应是 NDJSON：一行一个 JSON 帧。HTTP 层交上来的是任意
 // 字节切片，一行可能跨多个切片，也可能一个切片里有好几行 —— 所以需要一个跨
@@ -18,6 +46,8 @@ namespace my_agent::provider::ollama {
 // 地方，而它与 HTTP 无关。
 class StreamDecoder {
 public:
+    explicit StreamDecoder(std::shared_ptr<StreamStats> stats = {});
+
     // 消费一个字节切片，对其中每个完整行投出对应的 Msg。
     void feed(std::string_view chunk, const EventSink& sink);
 
@@ -25,6 +55,7 @@ private:
     void process_line(std::string_view line, const EventSink& sink);
 
     std::string line_buf_;
+    std::shared_ptr<StreamStats> stats_;
 };
 
 // 把 Thread 历史与工具规格编成 Ollama 的请求体。
@@ -37,7 +68,8 @@ StreamEffect make_stream(
     std::string host,
     int port,
     std::string model,
-    std::shared_ptr<http::HttpClient> client
+    std::shared_ptr<http::HttpClient> client,
+    std::shared_ptr<StreamStats> stats = {}
 );
 
 }  // namespace my_agent::provider::ollama

@@ -79,6 +79,48 @@ void append_message(nlohmann::json& messages, const Message& message)
 
 }  // namespace
 
+void StreamStats::record(
+    std::uint64_t prompt_eval_count,
+    std::uint64_t eval_count,
+    std::uint64_t eval_duration_nanoseconds
+) noexcept
+{
+    prompt_eval_count_.store(prompt_eval_count, std::memory_order_relaxed);
+    eval_count_.store(eval_count, std::memory_order_relaxed);
+    eval_duration_nanoseconds_.store(
+        eval_duration_nanoseconds, std::memory_order_relaxed
+    );
+    available_.store(true, std::memory_order_release);
+}
+
+StreamStats::Snapshot StreamStats::snapshot() const noexcept
+{
+    const bool available = available_.load(std::memory_order_acquire);
+    const std::uint64_t prompt_eval_count =
+        prompt_eval_count_.load(std::memory_order_relaxed);
+    const std::uint64_t eval_count =
+        eval_count_.load(std::memory_order_relaxed);
+    const std::uint64_t eval_duration_nanoseconds =
+        eval_duration_nanoseconds_.load(std::memory_order_relaxed);
+    const double eval_duration_seconds =
+        static_cast<double>(eval_duration_nanoseconds) / 1'000'000'000.0;
+    const double tokens_per_second = eval_duration_seconds > 0.0
+        ? static_cast<double>(eval_count) / eval_duration_seconds
+        : 0.0;
+    return Snapshot{
+        .available = available,
+        .prompt_eval_count = prompt_eval_count,
+        .eval_count = eval_count,
+        .eval_duration_seconds = eval_duration_seconds,
+        .tokens_per_second = tokens_per_second,
+    };
+}
+
+StreamDecoder::StreamDecoder(std::shared_ptr<StreamStats> stats)
+    : stats_{std::move(stats)}
+{
+}
+
 void StreamDecoder::feed(std::string_view chunk, const EventSink& sink)
 {
     line_buf_.append(chunk);
@@ -133,6 +175,13 @@ void StreamDecoder::process_line(std::string_view line, const EventSink& sink)
     }
 
     if (frame.value("done", false)) {
+        if (stats_) {
+            stats_->record(
+                frame.value("prompt_eval_count", std::uint64_t{0}),
+                frame.value("eval_count", std::uint64_t{0}),
+                frame.value("eval_duration", std::uint64_t{0})
+            );
+        }
         sink(Msg{StreamFinished{}});
     }
 }
@@ -172,14 +221,16 @@ StreamEffect make_stream(
     std::string host,
     int port,
     std::string model,
-    std::shared_ptr<http::HttpClient> client
+    std::shared_ptr<http::HttpClient> client,
+    std::shared_ptr<StreamStats> stats
 )
 {
     return [
         host = std::move(host),
         port,
         model = std::move(model),
-        client = std::move(client)
+        client = std::move(client),
+        stats = std::move(stats)
     ](Request request, EventSink sink) {
         const http::HttpRequest wire{
             .host = host,
@@ -191,7 +242,7 @@ StreamEffect make_stream(
         };
 
         // decoder 的行缓冲跨切片存活，所以它必须活在回调之外。
-        StreamDecoder decoder;
+        StreamDecoder decoder{stats};
 
         const http::HttpResult result =
             client->post_stream(wire, [&decoder, &sink](std::string_view chunk) {

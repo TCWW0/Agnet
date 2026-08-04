@@ -69,6 +69,41 @@ maya::Style to_maya_style(const StyledLine& line, const maya::Theme& theme)
     return style;
 }
 
+[[nodiscard]]
+maya::Style to_maya_status_style(
+    const StatusSegment& segment,
+    const maya::Theme& theme
+)
+{
+    return to_maya_style(
+        StyledLine{
+            .foreground = segment.foreground,
+            .bold = segment.kind == StatusSegmentKind::Activity,
+        },
+        theme
+    );
+}
+
+[[nodiscard]]
+maya::Element to_maya_status_bar(
+    const StatusBar& status_bar,
+    const maya::Theme& theme
+)
+{
+    std::vector<maya::FitItem> items;
+    items.reserve(status_bar.segments.size());
+    for (const StatusSegment& segment : status_bar.segments) {
+        items.push_back(maya::FitItem{
+            .el = maya::dsl::text(
+                segment.text,
+                to_maya_status_style(segment, theme)
+            ).build(),
+            .keep = segment.always ? maya::kKeepAlways : segment.keep,
+        });
+    }
+    return maya::dsl::fit_row(std::move(items)).build();
+}
+
 }  // namespace
 
 maya::Element to_maya_element(const Frame& frame, const maya::Theme& theme)
@@ -76,9 +111,16 @@ maya::Element to_maya_element(const Frame& frame, const maya::Theme& theme)
     std::vector<maya::Element> rows;
     rows.reserve(frame.lines.size());
 
-    for (auto line = frame.lines.rbegin(); line != frame.lines.rend(); ++line) {
+    for (std::size_t index = frame.lines.size(); index > 0; --index) {
+        const std::size_t line_index = index - 1;
+        if (frame.status_bar && frame.status_bar_line
+            && line_index == *frame.status_bar_line) {
+            rows.push_back(to_maya_status_bar(*frame.status_bar, theme));
+            continue;
+        }
+        const StyledLine& line = frame.lines.at(line_index);
         rows.push_back(
-            (maya::dsl::text(line->text, to_maya_style(*line, theme))
+            (maya::dsl::text(line.text, to_maya_style(line, theme))
              | maya::dsl::shrink(0.0F))
                 .build()
         );

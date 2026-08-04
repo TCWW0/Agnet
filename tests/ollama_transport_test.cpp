@@ -110,6 +110,32 @@ TEST(OllamaTransportTest, MapsDoneFrameToStreamFinishedWithoutEmptyDelta)
     EXPECT_TRUE(std::holds_alternative<my_agent::StreamFinished>(msgs.front()));
 }
 
+TEST(OllamaTransportTest, PublishesEvalStatsForTheStatusBar)
+{
+    const auto stats = std::make_shared<my_agent::provider::ollama::StreamStats>();
+    my_agent::provider::ollama::StreamDecoder decoder{stats};
+    std::vector<my_agent::Msg> msgs;
+    const my_agent::EventSink sink = [&msgs](my_agent::Msg msg) {
+        msgs.push_back(std::move(msg));
+    };
+
+    decoder.feed(
+        R"({"message":{"content":""},"done":true,"prompt_eval_count":128,)"
+        R"("prompt_eval_duration":1000000000,"eval_count":36,)"
+        R"("eval_duration":3000000000,"total_duration":4000000000})"
+        "\n",
+        sink
+    );
+
+    ASSERT_EQ(std::size_t{1}, msgs.size());
+    const my_agent::provider::ollama::StreamStats::Snapshot snapshot =
+        stats->snapshot();
+    EXPECT_EQ(128u, snapshot.prompt_eval_count);
+    EXPECT_EQ(36u, snapshot.eval_count);
+    EXPECT_EQ(3.0, snapshot.eval_duration_seconds);
+    EXPECT_EQ(12.0, snapshot.tokens_per_second);
+}
+
 // 场景：把一段带已完成工具调用的历史编成出站请求。
 // 领域语义：我们的 Role 只有 User/Assistant，工具结果藏在 assistant message 的
 // tool_calls[].status 里。Ollama 不认识这个形状 —— 出站时必须展开成 assistant

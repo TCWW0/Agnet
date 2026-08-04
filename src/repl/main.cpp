@@ -188,13 +188,19 @@ int main()
     const int port = std::stoi(env_or("MY_AGENT_OLLAMA_PORT", "11434"));
     const std::string model = env_or("MY_AGENT_MODEL", "qwen3.5:latest");
     const std::string profile_name = env_or("MY_AGENT_PROFILE", "write");
+    const std::size_t context_limit = static_cast<std::size_t>(
+        std::stoull(env_or("MY_AGENT_CONTEXT_LIMIT", "8192"))
+    );
+    const auto stream_stats =
+        std::make_shared<my_agent::provider::ollama::StreamStats>();
 
     my_agent::AsyncHost host_runtime{
         my_agent::provider::ollama::make_stream(
             host,
             port,
             model,
-            std::make_shared<my_agent::http::HttpClient>()
+            std::make_shared<my_agent::http::HttpClient>(),
+            stream_stats
         ),
     };
 
@@ -224,7 +230,26 @@ int main()
 
         // 非 tty 时 run_ui 立刻返回 false。判断放在 run_ui 里而不是这里，是因为
         // 「能不能跑」是那个循环自己的前置条件，调用方只需要知道它没跑。
-        if (my_agent::ui::run_ui(host_runtime, terminal)) {
+        const my_agent::ui::StatusProvider status_provider =
+            [model, context_limit, stream_stats] {
+                my_agent::ui::StatusBarInput status{
+                    .model_name = model,
+                    .context_limit = context_limit,
+                };
+                const auto snapshot = stream_stats->snapshot();
+                if (snapshot.available) {
+                    status.context_used = snapshot.prompt_eval_count;
+                    status.tokens_per_second = snapshot.tokens_per_second;
+                    status.elapsed_seconds = snapshot.eval_duration_seconds;
+                }
+                return status;
+            };
+
+        if (my_agent::ui::run_ui(
+                host_runtime,
+                terminal,
+                status_provider
+            )) {
             host_runtime.shutdown();
             return 0;
         }

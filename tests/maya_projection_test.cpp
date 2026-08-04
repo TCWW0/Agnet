@@ -115,6 +115,33 @@ TEST(MayaProjectionTest, CarriesStyledLineAttributesThroughMaya)
     EXPECT_NE(bytes.find(kStyledLine), std::string::npos) << bytes;
 }
 
+TEST(MayaProjectionTest, FitsStatusBarFragmentsAndKeepsActivityOnANarrowScreen)
+{
+    const my_agent::ui::StatusBar status = my_agent::ui::build_status_bar({
+        .phase = my_agent::ui::StatusPhase::Streaming,
+        .model_name = "qwen3.5:latest",
+        .context_used = 4096,
+        .context_limit = 8192,
+        .tokens_per_second = 12.5,
+        .elapsed_seconds = 3.25,
+    });
+    const my_agent::ui::Frame frame{
+        .lines = {{.text = my_agent::ui::plain_status_text(status)}},
+        .status_bar = status,
+        .status_bar_line = 0,
+    };
+
+    maya::FrameBuffer framebuffer{22, 4};
+    const std::string& bytes = framebuffer.render(
+        my_agent::ui::to_maya_element(frame, maya::theme::dark),
+        maya::theme::dark
+    );
+
+    EXPECT_NE(bytes.find("thinking"), std::string::npos) << bytes;
+    EXPECT_EQ(bytes.find("qwen3.5:latest"), std::string::npos) << bytes;
+    EXPECT_EQ(bytes.find("tok/s"), std::string::npos) << bytes;
+}
+
 TEST(MayaProjectionTest, CarriesToolCardDetailsToFrameBufferBytes)
 {
     my_agent::Model model;
