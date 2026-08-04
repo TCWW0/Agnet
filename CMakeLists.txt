@@ -41,6 +41,34 @@ endif()
 
 FetchContent_MakeAvailable(googletest nlohmann_json httplib)
 
+# ── maya: TUI rendering library (slice #15) ─────────────────────────────────
+# We take maya ONLY for its renderer. The single seam we use is
+#   FrameBuffer::render(const Element&, const Theme&) -> const std::string&
+# plus commit(). We deliberately DO NOT use maya's run<Program>() event loop:
+# its Program concept demands update(Model, Msg) -> pair<Model, Cmd<Msg>>,
+# which would take over this project's core AsyncHost/WorkPool/WakeSignal loop
+# — the very thing this project exists to demonstrate. Rendering only; the
+# event loop stays ours. Do not reintroduce run<Program>() as a "simplification".
+#
+# Pinned to the same commit as agentty's maya submodule (2026-07-21). Fetched
+# from the upstream git repo (not the local ../agentty path) so we get a clean
+# pin unaffected by any local submodule drift.
+#
+# Two options MUST be forced off before MakeAvailable:
+#   MAYA_BUILD_EXAMPLES — we don't build maya's demos.
+#   MAYA_NATIVE_TUNING  — default ON bakes -march=native into the binary,
+#                         which would make our build non-portable.
+# (maya's tests/fuzzers already default OFF.)
+set(MAYA_BUILD_EXAMPLES OFF CACHE INTERNAL "")
+set(MAYA_NATIVE_TUNING  OFF CACHE INTERNAL "")
+FetchContent_Declare(
+    maya
+    GIT_REPOSITORY https://github.com/1ay1/maya.git
+    GIT_TAG cc35bcf5faf8dfddb284b0ac5a531025873765da
+    SYSTEM
+)
+FetchContent_MakeAvailable(maya)
+
 include(GoogleTest)
 
 enable_testing()
@@ -65,7 +93,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_tools
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 target_link_libraries(
@@ -87,7 +115,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_http
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 target_link_libraries(
@@ -127,7 +155,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_core
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 target_link_libraries(
@@ -165,7 +193,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_headless
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 target_link_libraries(
@@ -205,7 +233,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_async_runtime
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 target_link_libraries(
@@ -379,7 +407,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_provider
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 target_link_libraries(
@@ -471,7 +499,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_prompt
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 add_executable(
@@ -505,7 +533,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_ui_text
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 add_executable(
@@ -540,7 +568,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_virtual_terminal
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 add_executable(
@@ -594,7 +622,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_ui_view
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 target_link_libraries(
@@ -637,7 +665,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_ui_loop
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 target_link_libraries(
@@ -697,7 +725,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_ui_input
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 target_link_libraries(
@@ -737,7 +765,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_ui_clock
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 add_executable(
@@ -772,7 +800,7 @@ target_include_directories(
 
 target_compile_features(
     my_agent_ui_terminal
-    PUBLIC cxx_std_23
+    PUBLIC cxx_std_26
 )
 
 target_link_libraries(
@@ -811,4 +839,24 @@ target_link_libraries(
         my_agent_provider
         my_agent_prompt
         my_agent_ui_loop
+)
+
+# maya rendering smoke test (slice #15). Proves the maya seam links and emits
+# bytes. The `maya` target comes from FetchContent above; wired SYSTEM to keep
+# maya's header warnings out of our build.
+add_executable(
+    maya_smoke_test
+    tests/maya_smoke_test.cpp
+)
+
+target_link_libraries(
+    maya_smoke_test
+    PRIVATE
+        maya
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    maya_smoke_test
+    TEST_PREFIX "maya_smoke."
 )
