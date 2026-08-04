@@ -2,22 +2,17 @@
 
 #include "my_agent/ui/view.hpp"
 
+#include <memory>
 #include <string>
 #include <string_view>
 
 #include <termios.h>
 
-namespace my_agent::ui {
+namespace maya {
+class FrameBuffer;
+}  // namespace maya
 
-// 把一帧转成终端字节。纯函数，不碰终端 —— 转义序列的正确性因此可以脱离 tty 断言。
-//
-// columns 是终端列数，为的是分辨「一行是否正好填满整宽」。填满至第 W-1 列的行，
-// 光标停在末列并置待换行位（ECMA-48 §8.3.118），此时再发 EL 会从末列擦起，抹掉刚
-// 画上去的最后一格 —— 幽灵行成因 2。所以填满的行必须跳过 EL。未填满的行仍要发 EL
-// 抹掉上一帧更长的行留下的横向残留。判据按**显示宽度**而非字节数：CJK 行的字节数
-// 远大于列数。
-[[nodiscard]]
-std::string frame_bytes(const Frame& frame, int columns);
+namespace my_agent::ui {
 
 // 进入/退出全屏的字节。做成常量而非藏在驱动内部，是为了让「退出必须精确逆转进入」
 // 这条不变量可以被断言 —— 顺序错了会让用户的 shell 丢掉光标。
@@ -73,6 +68,7 @@ private:
     bool is_tty_;
     // 进入 raw mode 之前的 termios，析构时原样写回。
     termios saved_termios_{};
+    std::unique_ptr<maya::FrameBuffer> framebuffer_;
 };
 
 }  // namespace my_agent::ui

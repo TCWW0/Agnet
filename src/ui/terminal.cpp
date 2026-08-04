@@ -1,11 +1,15 @@
 #include "my_agent/ui/terminal.hpp"
 
-#include "my_agent/ui/text_width.hpp"
+#include "my_agent/ui/maya_projection.hpp"
+
+#include <maya/render/frame.hpp>
+#include <maya/style/theme.hpp>
 
 #include <atomic>
 #include <cerrno>
 #include <csignal>
 #include <cstddef>
+#include <memory>
 
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -60,8 +64,8 @@ extern "C" void crash_signal_handler(int signal_number)
 // 成因都已在 #13/#14 修掉（宽度表补齐 + 填满行跳过 EL），此时输入行按真实宽度裁剪，
 // 够不到右边距，DECAWM 无从咬起。这条防的是**未来**：宽度表跟不上 Unicode 新分配时，
 // 漏网字符会被欠算、把行推过右边距 —— DECAWM 关掉后光标钉在末列原地覆写而非滚屏，
-// 幽灵行退化成末格被覆盖这种局部瑕疵，而不是整屏错位。放在 frame_bytes 跳过填满行的
-// EL 之后才安全：DECAWM-off 时光标停在第 W-1 列，无条件 EL 会擦掉那一格（本片已处理）。
+// 幽灵行退化成末格被覆盖这种局部瑕疵，而不是整屏错位。Maya 的序列化层负责 cell
+// diff、EL 保护与宽度处理；本驱动只在会话边界管理终端模式。
 std::string_view enter_bytes() noexcept
 {
     return "\x1b[?1049h\x1b[?7l\x1b[?25l";
@@ -80,7 +84,8 @@ TerminalDriver::TerminalDriver(int input_fd, int output_fd)
       output_fd_{output_fd},
       // 两端都必须是 tty。只有输出是 tty 时（`cat file | my_agent`）改不了输入的
       // termios，读键盘的那套逻辑无从工作，只能整体回退。
-      is_tty_{::isatty(input_fd) == 1 && ::isatty(output_fd) == 1}
+      is_tty_{::isatty(input_fd) == 1 && ::isatty(output_fd) == 1},
+      framebuffer_{std::make_unique<maya::FrameBuffer>()}
 {
     if (!is_tty_) {
         return;
@@ -136,11 +141,23 @@ int TerminalDriver::input_fd() const noexcept
 
 bool TerminalDriver::render(const Frame& frame) noexcept
 {
-    // 一次 write 写完整帧。分多次写会让终端有机会在中间刷新，出现半帧画面（撕裂）。
-    // 列数从 size() 取 —— 它是「一行是否填满整宽」的唯一判据来源，render 手上有它，
-    // 而纯函数 frame_bytes 拿不到，所以必须由这里穿进去。
-    const std::string bytes = frame_bytes(frame, size().columns);
-    return write_all(output_fd_, bytes);
+    const Size current_size = size();
+    if (framebuffer_->width() != current_size.columns
+        || framebuffer_->height() != current_size.rows) {
+        framebuffer_->resize(current_size.columns, current_size.rows);
+    }
+
+    const maya::Theme& theme = maya::theme::dark;
+    const std::string& bytes =
+        framebuffer_->render(to_maya_element(frame, theme), theme);
+    if (!write_all(output_fd_, bytes)) {
+        // Maya render() does not swap buffers. Skipping commit on write failure
+        // keeps front_ aligned with the terminal's last successful frame, so
+        // the next render produces a complete diff instead of losing content.
+        return false;
+    }
+    framebuffer_->commit();
+    return true;
 }
 
 Size TerminalDriver::size() const noexcept
@@ -192,31 +209,6 @@ void TerminalDriver::restore_on_crash() noexcept
     ::tcsetattr(
         g_crash_fd.load(std::memory_order_relaxed), TCSAFLUSH, &g_crash_termios
     );
-}
-
-std::string frame_bytes(const Frame& frame, int columns)
-{
-    std::string bytes;
-    int row = 1;  // CUP 的行列都是 1-based
-    for (const StyledLine& line : frame.lines) {
-        // 显式定位而不是靠 "\n"：raw mode 下没有 ONLCR，"\n" 只下移不回列，
-        // 界面会呈阶梯状。
-        bytes += "\x1b[" + std::to_string(row) + ";1H";
-        bytes += line.text;
-        // 只有未填满整宽的行才发 EL。填满至第 W-1 列的行光标停在末列并置待换行位
-        // （ECMA-48 §8.3.118），从那里发 EL 会擦掉刚画上去的最后一格 —— 幽灵行成因 2。
-        // 判据用显示宽度而非字节数：CJK 行字节数远大于列数。>= 而非 ==：万一某行超宽
-        // （不该发生，但 tail_within/wrap 之外的调用方无法保证），它同样铺满整行、
-        // 右侧无残留可擦，发 EL 只会误伤。
-        if (columns <= 0 || display_width(line.text) < columns) {
-            bytes += "\x1b[K";  // EL：擦到行尾，抹掉上一帧更长的行留下的尾巴
-        }
-        ++row;
-    }
-    // ED(0)：擦到屏幕底部。EL 管横向残留，这条管纵向 —— 这一帧比上一帧短时，
-    // 多出来的旧行（比如已消失的审批提示）必须清掉。
-    bytes += "\x1b[J";
-    return bytes;
 }
 
 }  // namespace my_agent::ui

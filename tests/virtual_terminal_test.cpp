@@ -15,8 +15,8 @@ using my_agent::test::VirtualTerminal;
 // 期望值来自 ECMA-48 与 DEC STD 070 的规定，不是从实现反推的。
 
 // 场景：CUP 绝对定位。
-// 领域语义：frame_bytes 完全依赖 CUP 逐行定位（raw mode 下没有 ONLCR，"\n" 只下移
-// 不回列）。定位错一行，整个界面就错一行 —— 这是幽灵行表现出来的样子。
+// 领域语义：渲染字节依赖 CUP 定位（raw mode 下没有 ONLCR，"\n" 只下移不回列）。
+// 定位错一行，整个界面就错一行 —— 这是幽灵行表现出来的样子。
 TEST(VirtualTerminalTest, CupPlacesTextOnTheAddressedRow)
 {
     VirtualTerminal terminal{10, 3};
@@ -88,8 +88,8 @@ TEST(VirtualTerminalTest, WideCharactersOccupyTwoCells)
 }
 
 // 场景：EL 擦到行尾。
-// 领域语义：frame_bytes 每行画完发一次 EL，用途是抹掉上一帧更长的行留下的尾巴。
-// 量具必须实现它，否则屏幕内容会残留旧字符，探针把残留误报成幽灵行。
+// 领域语义：EL 会抹掉上一帧更长的行留下的尾巴。量具必须实现它，否则屏幕内容会
+// 残留旧字符，探针把残留误报成幽灵行。
 TEST(VirtualTerminalTest, EraseInLineClearsTheTailButKeepsWhatWasJustDrawn)
 {
     VirtualTerminal terminal{8, 1};

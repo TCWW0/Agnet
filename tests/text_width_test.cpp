@@ -127,7 +127,7 @@ TEST(TextWidthTest, CjkExtensionIdeographsBeyondTheBmpAreTwoColumnsWide)
 // 领域语义：这条是把宽度表和幽灵行**连起来**的那一条 —— 前两条只说「量错了」，
 // 这条说「量错了会让 wrap 违反它自己的契约」。wrap 承诺返回的每一行都不超过
 // columns 列；欠算之下它以为 5 个 ✅ 占 5 列（放得进 6 列），实际占 10 列。
-// 超宽行进到 frame_bytes 之后就是幽灵行：光标越过右边距 → DECAWM 未关 → 备用屏
+// 超宽行进到终端渲染路径之后就是幽灵行：光标越过右边距 → DECAWM 未关 → 备用屏
 // 滚动一行 → 后续所有 CUP 绝对定位落到错位的物理行上。
 //
 // 宽度用 tests/unicode_width_oracle.hpp 量，不用 display_width —— 用被测函数量

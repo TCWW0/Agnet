@@ -649,6 +649,48 @@ gtest_discover_tests(
     TEST_PREFIX "view."
 )
 
+# TUI Maya projection: our own Frame/StyledLine IR -> maya::Element. This is the
+# only place the pure view projection learns about Maya types.
+add_library(
+    my_agent_ui_maya
+    src/ui/maya_projection.cpp
+)
+
+target_include_directories(
+    my_agent_ui_maya
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_ui_maya
+    PUBLIC cxx_std_26
+)
+
+target_link_libraries(
+    my_agent_ui_maya
+    PUBLIC
+        my_agent_ui_view
+        maya
+)
+
+add_executable(
+    maya_projection_test
+    tests/maya_projection_test.cpp
+)
+
+target_link_libraries(
+    maya_projection_test
+    PRIVATE
+        my_agent_ui_maya
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    maya_projection_test
+    TEST_PREFIX "maya_projection."
+)
+
 # TUI 事件循环：apply_key 是纯的（按键 -> UiState 变更 + 可选 Msg），
 # run_ui 才碰 poll 与终端。分开是为了让按键语义脱离 tty 可测。
 add_library(
@@ -785,8 +827,8 @@ gtest_discover_tests(
     TEST_PREFIX "repaint_clock."
 )
 
-# TUI 终端驱动：唯一写字节、唯一改 termios 的地方。字节生成与 tty 操作分开，
-# 前者可脱离终端单测，后者在非 tty 环境下降级。
+# TUI terminal driver: owns termios/raw-mode and the Maya render/write/commit
+# boundary. It does not generate frame bytes itself.
 add_library(
     my_agent_ui_terminal
     src/ui/terminal.cpp
@@ -806,7 +848,7 @@ target_compile_features(
 target_link_libraries(
     my_agent_ui_terminal
     PUBLIC
-        my_agent_ui_view
+        my_agent_ui_maya
 )
 
 add_executable(

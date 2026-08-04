@@ -1,5 +1,7 @@
 #include "my_agent/ui/terminal.hpp"
 
+#include <cerrno>
+#include <cstddef>
 #include <csignal>
 #include <string>
 
@@ -13,65 +15,95 @@
 
 namespace {
 
-// 场景：把两行帧转成终端字节。
-// 领域语义：全帧重绘是**覆写**而不是清屏重画 —— 先清屏会让整个界面闪一下。覆写的
-// 代价是上一帧更长的行会留下尾巴（"允许 bash？" 覆写在 "允许 read_file？" 上会剩
-// "le?"）。所以每行写完必须擦到行尾。这是全帧重绘唯一的正确性要求。
-// Red 原因：仓库尚不存在 ui::frame_bytes（编译错误）。
-TEST(TerminalTest, ErasesToEndOfEachLineSoLongerPreviousLinesLeaveNoResidue)
+struct PipeFds {
+    int read_fd = -1;
+    int write_fd = -1;
+
+    PipeFds() = default;
+
+    PipeFds(const PipeFds&) = delete;
+    PipeFds& operator=(const PipeFds&) = delete;
+
+    ~PipeFds()
+    {
+        close_read();
+        close_write();
+    }
+
+    [[nodiscard]]
+    bool open() noexcept
+    {
+        int fds[2] = {-1, -1};
+        if (::pipe(fds) != 0) {
+            return false;
+        }
+        read_fd = fds[0];
+        write_fd = fds[1];
+        return true;
+    }
+
+    void close_read() noexcept
+    {
+        if (read_fd != -1) {
+            ::close(read_fd);
+            read_fd = -1;
+        }
+    }
+
+    void close_write() noexcept
+    {
+        if (write_fd != -1) {
+            ::close(write_fd);
+            write_fd = -1;
+        }
+    }
+};
+
+[[nodiscard]]
+std::string read_available(int fd)
 {
-    const my_agent::ui::Frame frame{
-        .lines = {{.text = "first"}, {.text = "second"}},
-    };
-
-    // 80 列：两行都远窄于整宽，所以 EL 照常发 —— 这正是这条测试守着的那一侧
-    // （未填满的行必须擦横向残留），与 #14 让填满行跳过 EL 互为对照。
-    const std::string bytes = my_agent::ui::frame_bytes(frame, 80);
-
-    // 每行正文之后紧跟 EL（擦到行尾）。
-    EXPECT_NE(std::string::npos, bytes.find("first\x1b[K"));
-    EXPECT_NE(std::string::npos, bytes.find("second\x1b[K"));
+    std::string bytes;
+    char buffer[4096];
+    for (;;) {
+        const ssize_t count = ::read(fd, buffer, sizeof(buffer));
+        if (count > 0) {
+            bytes.append(buffer, static_cast<std::size_t>(count));
+            continue;
+        }
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return bytes;
+        }
+        return bytes;
+    }
 }
 
-// 场景：多行帧的行定位。
-// 领域语义：帧的第 n 行必须落在屏幕的第 n 行。靠 "\n" 推进是错的 —— raw mode 下
-// 没有 ONLCR，"\n" 只下移一行不回到第 1 列，第二行就会从第一行的结尾处开始，
-// 整个界面呈阶梯状。所以每行前必须显式 CUP 定位到 (row, 1)。
-// Red 原因：当前实现只拼接正文，没有任何定位序列。
-TEST(TerminalTest, PositionsEachLineAtItsOwnRow)
+[[nodiscard]]
+bool make_nonblocking(int fd)
 {
-    const my_agent::ui::Frame frame{
-        .lines = {{.text = "first"}, {.text = "second"}},
-    };
-
-    // 80 列：定位序列与列宽无关，给一个够宽的值让两行都不触发跳过 EL 的分支，
-    // 本条只断言 CUP 顺序，不受 EL 有无影响。
-    const std::string bytes = my_agent::ui::frame_bytes(frame, 80);
-
-    const std::size_t row1 = bytes.find("\x1b[1;1H");
-    const std::size_t row2 = bytes.find("\x1b[2;1H");
-    ASSERT_NE(std::string::npos, row1);
-    ASSERT_NE(std::string::npos, row2);
-    EXPECT_LT(row1, row2);
-    EXPECT_LT(row1, bytes.find("first"));
-    EXPECT_LT(bytes.find("first"), row2);
+    const int flags = ::fcntl(fd, F_GETFL, 0);
+    return flags != -1 && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) != -1;
 }
 
-// 场景：这一帧比上一帧短。
-// 领域语义：EL 只擦横向残留，纵向残留要靠 ED。审批提示消失后帧少一行，如果不擦，
-// "allow bash? [y/n]" 会永久留在屏幕上 —— 用户会以为还有东西等着批。全帧重绘的
-// 纵向对偶：最后一行之后擦到屏幕底部。
-// Red 原因：当前实现写完最后一行就结束，没有 ED。
-TEST(TerminalTest, ErasesBelowTheLastLineSoAShorterFrameLeavesNoResidue)
+[[nodiscard]]
+bool fill_until_would_block(int fd)
 {
-    const my_agent::ui::Frame frame{.lines = {{.text = "only"}}};
-
-    // 80 列："only" 远窄于整宽，ED 的存在与 EL 跳过分支无关，本条只断言 ED。
-    const std::string bytes = my_agent::ui::frame_bytes(frame, 80);
-
-    const std::size_t erase_below = bytes.find("\x1b[J");
-    ASSERT_NE(std::string::npos, erase_below);
-    EXPECT_LT(bytes.find("only"), erase_below);  // 必须在正文之后，否则擦掉自己
+    const std::string chunk(4096, 'x');
+    for (;;) {
+        const ssize_t count = ::write(fd, chunk.data(), chunk.size());
+        if (count > 0) {
+            continue;
+        }
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return true;
+        }
+        return false;
+    }
 }
 
 // 场景：进入与退出全屏的字节序列。
@@ -108,33 +140,6 @@ TEST(TerminalTest, LeaveSequenceReversesEnterSequenceInOppositeOrder)
     // 退出：显光标 → 开 autowrap → 回主屏。逐段都是进入的镜像。
     EXPECT_LT(leave.find(cursor_show), leave.find(autowrap_on));
     EXPECT_LT(leave.find(autowrap_on), leave.find(alt_screen_off));
-}
-
-// 场景：DECAWM 的开关时机 —— 跨帧持久，不是每帧开关一次。
-// 领域语义：#14 关 DECAWM 是为了让超宽内容不越过右边距。它必须在进入备用屏时关一次、
-// 退出前还原一次，而**每一帧都不去碰它**。若 frame_bytes 每帧发一次 ?7l/?7h，代价不只
-// 是冗余字节：在 off→on→off 的窗口里，终端短暂恢复自动回卷，一帧里若正好有超宽行就
-// 又能滚屏 —— 幽灵行从这条缝里漏回来。所以「只关一次」是正确性要求，不是优化。
-// 关的动作属于 enter_bytes（每会话一次），frame_bytes（每帧）必须对 ?7 完全沉默。
-TEST(TerminalTest, DisablingAutowrapPersistsAcrossFramesInsteadOfTogglingPerFrame)
-{
-    // enter/leave 各恰好关/开一次 —— 时机集中在会话的两端。
-    const std::string enter{my_agent::ui::enter_bytes()};
-    const std::string leave{my_agent::ui::leave_bytes()};
-    EXPECT_EQ(std::string::npos, enter.find("\x1b[?7l", enter.find("\x1b[?7l") + 1))
-        << "enter_bytes 关了不止一次 DECAWM";
-    EXPECT_EQ(std::string::npos, leave.find("\x1b[?7h", leave.find("\x1b[?7h") + 1))
-        << "leave_bytes 开了不止一次 DECAWM";
-
-    // 每帧路径对 ?7 完全沉默：多行帧里没有任何一处切换自动回卷。
-    const my_agent::ui::Frame frame{
-        .lines = {{.text = "first"}, {.text = "second"}, {.text = "> "}},
-    };
-    const std::string bytes = my_agent::ui::frame_bytes(frame, 80);
-    EXPECT_EQ(std::string::npos, bytes.find("\x1b[?7l"))
-        << "frame_bytes 每帧重新关 DECAWM —— 应只在 enter_bytes 关一次";
-    EXPECT_EQ(std::string::npos, bytes.find("\x1b[?7h"))
-        << "frame_bytes 每帧开 DECAWM —— off→on 的窗口里超宽行又能滚屏，幽灵行会漏回来";
 }
 
 // 场景：在非 tty 上构造驱动（CI、管道、`my_agent | tee`）。
@@ -245,20 +250,71 @@ TEST(TerminalTest, RestoresTerminalWhenTheProcessCrashesWithoutUnwinding)
 // Red 原因：仓库尚不存在 render()（编译错误）。
 TEST(TerminalTest, RenderReportsFailureSoTheCallerDoesNotCommitAnUnwrittenFrame)
 {
-    int pipe_fds[2] = {-1, -1};
-    ASSERT_EQ(0, ::pipe(pipe_fds));
-    ::close(pipe_fds[0]);  // 读端关掉：写入会拿到 EPIPE
+    PipeFds pipe;
+    ASSERT_TRUE(pipe.open());
+    pipe.close_read();  // 读端关掉：写入会拿到 EPIPE
 
     // SIGPIPE 默认会杀掉进程，这里要的是 write 返回 -1。
     const auto previous = std::signal(SIGPIPE, SIG_IGN);
 
-    my_agent::ui::TerminalDriver driver{pipe_fds[1], pipe_fds[1]};
+    my_agent::ui::TerminalDriver driver{pipe.write_fd, pipe.write_fd};
     const my_agent::ui::Frame frame{.lines = {{.text = "content"}}};
 
     EXPECT_FALSE(driver.render(frame));
 
     std::signal(SIGPIPE, previous);
-    ::close(pipe_fds[1]);
+}
+
+// 场景：同一帧连续两次成功渲染。
+// 领域语义：TerminalDriver::render 是 Maya FrameBuffer 的提交边界。第一次写成功后必须
+// commit，front_ 才代表终端真实画面；第二次渲染相同 Frame 时 Maya diff 不应重画正文。
+// Red 原因：旧自有字节生成路径每次都全帧输出，因此第二次仍会包含哨兵正文。
+TEST(TerminalTest, RenderCommitsSuccessfulMayaFrameSoIdenticalFrameDoesNotRedrawContent)
+{
+    constexpr const char* kSentinel = "TERMINALMAYACOMMIT7F3A";
+
+    PipeFds pipe;
+    ASSERT_TRUE(pipe.open());
+    ASSERT_TRUE(make_nonblocking(pipe.read_fd));
+
+    my_agent::ui::TerminalDriver driver{pipe.write_fd, pipe.write_fd};
+    const my_agent::ui::Frame frame{.lines = {{.text = kSentinel}}};
+
+    ASSERT_TRUE(driver.render(frame));
+    const std::string first = read_available(pipe.read_fd);
+    ASSERT_NE(std::string::npos, first.find(kSentinel)) << first;
+
+    ASSERT_TRUE(driver.render(frame));
+    const std::string second = read_available(pipe.read_fd);
+    EXPECT_EQ(std::string::npos, second.find(kSentinel)) << second;
+}
+
+// 场景：Maya 已经算出这一帧，但输出 fd 当时写不进去。
+// 领域语义：write 失败时必须跳过 commit。否则 front_ 会前进到终端从没显示过的内容，
+// 清空管道后重试同一帧就会变成空 diff，哨兵永久丢失。
+TEST(TerminalTest, RenderSkipsMayaCommitWhenTheWriteFails)
+{
+    constexpr const char* kSentinel = "TERMINALMAYARETRY7F3A";
+
+    PipeFds pipe;
+    ASSERT_TRUE(pipe.open());
+    ASSERT_TRUE(make_nonblocking(pipe.read_fd));
+    ASSERT_TRUE(make_nonblocking(pipe.write_fd));
+    ASSERT_TRUE(fill_until_would_block(pipe.write_fd));
+
+    my_agent::ui::TerminalDriver driver{pipe.write_fd, pipe.write_fd};
+    const my_agent::ui::Frame frame{.lines = {{.text = kSentinel}}};
+
+    ASSERT_FALSE(driver.render(frame));
+    static_cast<void>(read_available(pipe.read_fd));
+
+    ASSERT_TRUE(driver.render(frame));
+    const std::string retry = read_available(pipe.read_fd);
+    EXPECT_NE(std::string::npos, retry.find(kSentinel)) << retry;
+
+    ASSERT_TRUE(driver.render(frame));
+    const std::string settled = read_available(pipe.read_fd);
+    EXPECT_EQ(std::string::npos, settled.find(kSentinel)) << settled;
 }
 
 // 场景：非 tty 上查询尺寸。

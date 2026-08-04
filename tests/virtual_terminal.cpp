@@ -177,6 +177,9 @@ void VirtualTerminal::apply_csi(std::string_view params, char final_byte)
             pending_wrap_ = false;
             return;
         }
+        if (mode == "2026") {
+            return;  // synchronized output; no effect on cell accounting
+        }
         if (mode == "25") {
             return;  // 光标可见性不影响记账
         }
@@ -214,6 +217,8 @@ void VirtualTerminal::apply_csi(std::string_view params, char final_byte)
                 return;
             }
             break;
+        case 'm':  // SGR：颜色/样式不影响格子记账
+            return;
         default:
             break;
     }

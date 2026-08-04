@@ -19,10 +19,31 @@ struct UiState {
     std::string input;
 };
 
-// 一行待渲染文本。目前只有正文；颜色/加粗等属性等到有测试需要区分时再加，
-// 类型名先把位置占住，免得届时改动所有调用点。
+// Semantic style slots owned by this project. Keep Maya types out of the pure
+// Frame IR so existing view tests can stay text-focused.
+enum class StyleColor {
+    Default,
+    Text,
+    Muted,
+    Primary,
+    Secondary,
+    Accent,
+    Success,
+    Error,
+    Warning,
+    Info,
+    Surface,
+    Background,
+    Border,
+};
+
+// 一行待渲染文本。样式字段属于自有中间表示；Maya 只在下一层机械转换时出现。
 struct StyledLine {
     std::string text;
+    StyleColor foreground{StyleColor::Default};
+    StyleColor background{StyleColor::Default};
+    bool bold{false};
+    bool dim{false};
 };
 
 // 一整屏的内容。渲染层拿到它之后才去碰终端 —— Frame 本身不含任何转义序列。
