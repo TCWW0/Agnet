@@ -39,30 +39,13 @@ StatusSegment activity_segment(const StatusBarInput& input)
                 .foreground = StyleColor::Success,
             };
         case StatusPhase::AwaitingPermission:
-        {
-            std::string text = "▌ allow " + (input.tool_name.empty()
-                ? std::string{"tool"}
-                : input.tool_name);
-            if (!input.permission_effect.empty()
-                || !input.permission_args.empty()) {
-                text += "? effect="
-                    + (input.permission_effect.empty()
-                        ? std::string{"none"}
-                        : input.permission_effect)
-                    + " args: "
-                    + (input.permission_args.empty()
-                        ? std::string{"{}"}
-                        : input.permission_args)
-                    + " [y/n]";
-            }
             return {
                 .kind = StatusSegmentKind::Activity,
-                .text = std::move(text),
+                .text = "▌ awaiting approval",
                 .keep = std::numeric_limits<int>::max(),
                 .always = true,
                 .foreground = StyleColor::Warning,
             };
-        }
         case StatusPhase::Idle:
             return {
                 .kind = StatusSegmentKind::Activity,

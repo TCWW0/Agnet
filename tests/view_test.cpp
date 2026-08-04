@@ -330,6 +330,48 @@ TEST(ViewTest, ShowsPermissionToolEffectAndArguments)
     EXPECT_NE(std::string::npos, text.find("project"));
 }
 
+TEST(ViewTest, KeepsPermissionDetailsOnASeparateLineFromTheStatusBar)
+{
+    my_agent::Model model = model_with({
+        {.role = my_agent::Role::Assistant,
+         .text = "",
+         .tool_calls = {
+             {.id = "remember-1", .name = "remember",
+              .args = { {"text", "Use zsh"}, {"scope", "project"} }},
+         }},
+    });
+    model.phase = my_agent::AwaitingPermission{};
+    model.pending_permission = my_agent::PendingPermission{.id = "remember-1"};
+
+    const my_agent::ui::Frame frame = my_agent::ui::view(
+        model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 100, .rows = 12}
+    );
+
+    ASSERT_TRUE(frame.status_bar.has_value());
+    ASSERT_TRUE(frame.status_bar_line.has_value());
+    const std::size_t status_line = *frame.status_bar_line;
+    EXPECT_EQ(
+        frame.lines.at(status_line).text,
+        my_agent::ui::plain_status_text(*frame.status_bar)
+    );
+    EXPECT_EQ(std::string::npos, frame.lines.at(status_line).text.find("effect="));
+    EXPECT_EQ(std::string::npos, frame.lines.at(status_line).text.find("args:"));
+
+    const auto permission_line = std::find_if(
+        frame.lines.begin(), frame.lines.end(),
+        [](const my_agent::ui::StyledLine& line) {
+            return line.text.find("permission:") != std::string::npos;
+        }
+    );
+    ASSERT_NE(frame.lines.end(), permission_line);
+    EXPECT_NE(status_line, static_cast<std::size_t>(
+        std::distance(frame.lines.begin(), permission_line)
+    ));
+    EXPECT_NE(std::string::npos, permission_line->text.find("effect=write_fs"));
+    EXPECT_NE(std::string::npos, permission_line->text.find("Use zsh"));
+    EXPECT_EQ(my_agent::ui::StyleColor::Warning, permission_line->foreground);
+}
+
 TEST(ViewTest, TruncatesLongToolOutputAndReportsElidedCharacters)
 {
     const std::string output(400, 'x');

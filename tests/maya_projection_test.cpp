@@ -199,6 +199,8 @@ TEST(MayaProjectionTest, CarriesToolCardDetailsToFrameBufferBytes)
 
     EXPECT_NE(bytes.find("[pending]"), std::string::npos) << bytes;
     EXPECT_NE(bytes.find("remember"), std::string::npos) << bytes;
+    EXPECT_NE(bytes.find("permission:"), std::string::npos) << bytes;
+    EXPECT_NE(bytes.find("awaiting approval"), std::string::npos) << bytes;
     EXPECT_NE(bytes.find("effect=write_fs"), std::string::npos) << bytes;
     EXPECT_NE(bytes.find("Use zsh"), std::string::npos) << bytes;
     EXPECT_NE(bytes.find("project"), std::string::npos) << bytes;

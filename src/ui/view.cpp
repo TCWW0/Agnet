@@ -615,6 +615,28 @@ Frame view(
             : "none";
         status.permission_args = call ? call->args.dump() : "{}";
     }
+    if (status.phase == StatusPhase::AwaitingPermission
+        && model.pending_permission) {
+        frame.lines.push_back(StyledLine{
+            .text = "permission: allow "
+                + (status.tool_name.empty()
+                    ? std::string{"tool"}
+                    : status.tool_name)
+                + "? effect="
+                + (status.permission_effect.empty()
+                    ? std::string{"none"}
+                    : status.permission_effect)
+                + " args: "
+                + (status.permission_args.empty()
+                    ? std::string{"{}"}
+                    : status.permission_args)
+                + " [y/n]",
+            .rail = "!",
+            .rail_foreground = StyleColor::Warning,
+            .foreground = StyleColor::Warning,
+            .bold = true,
+        });
+    }
     if (status.phase != StatusPhase::Idle || has_status_metadata(status)) {
         frame.status_bar = build_status_bar(status);
         frame.status_bar_line = frame.lines.size();
