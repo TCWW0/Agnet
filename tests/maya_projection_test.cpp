@@ -1,4 +1,5 @@
 #include "my_agent/ui/maya_projection.hpp"
+#include "virtual_terminal.hpp"
 
 #include <maya/render/frame.hpp>
 #include <maya/style/theme.hpp>
@@ -111,4 +112,107 @@ TEST(MayaProjectionTest, CarriesStyledLineAttributesThroughMaya)
 
     EXPECT_TRUE(has_sgr_sequence_with_params(bytes, {"1", "91", "106"})) << bytes;
     EXPECT_NE(bytes.find(kStyledLine), std::string::npos) << bytes;
+}
+
+TEST(MayaProjectionTest, WrapsMixedEmojiAndCjkTextThroughMaya)
+{
+    const my_agent::ui::Frame frame{
+        .lines =
+            {
+                my_agent::ui::StyledLine{
+                    .text = "你好 ✅ alpha beta TAIL17",
+                },
+            },
+    };
+
+    maya::FrameBuffer framebuffer{12, 5};
+    const std::string& bytes =
+        framebuffer.render(
+            my_agent::ui::to_maya_element(frame, maya::theme::dark),
+            maya::theme::dark
+        );
+
+    my_agent::test::VirtualTerminal terminal{12, 5};
+    terminal.feed(bytes);
+
+    ASSERT_TRUE(terminal.unhandled().empty())
+        << "Unhandled sequence: " << terminal.unhandled().front();
+    EXPECT_EQ(0, terminal.right_margin_overruns()) << bytes;
+
+    int occupied_rows = 0;
+    bool tail_visible = false;
+    for (const std::string& row : terminal.screen()) {
+        if (!row.empty()) {
+            ++occupied_rows;
+        }
+        if (row.find("TAIL17") != std::string::npos) {
+            tail_visible = true;
+        }
+    }
+    EXPECT_LT(1, occupied_rows) << bytes;
+    EXPECT_TRUE(tail_visible) << bytes;
+}
+
+TEST(MayaProjectionTest, ClipsOverflowingFramesAtTheTop)
+{
+    const my_agent::ui::Frame frame{
+        .lines =
+            {
+                my_agent::ui::StyledLine{.text = "old0"},
+                my_agent::ui::StyledLine{.text = "old1"},
+                my_agent::ui::StyledLine{.text = "old2"},
+                my_agent::ui::StyledLine{.text = "new3"},
+                my_agent::ui::StyledLine{.text = "new4"},
+            },
+    };
+
+    maya::FrameBuffer framebuffer{12, 3};
+    const std::string& bytes =
+        framebuffer.render(
+            my_agent::ui::to_maya_element(frame, maya::theme::dark),
+            maya::theme::dark
+        );
+
+    my_agent::test::VirtualTerminal terminal{12, 3};
+    terminal.feed(bytes);
+
+    ASSERT_TRUE(terminal.unhandled().empty())
+        << "Unhandled sequence: " << terminal.unhandled().front();
+
+    bool old_visible = false;
+    bool newest_visible = false;
+    for (const std::string& row : terminal.screen()) {
+        old_visible = old_visible || row.find("old0") != std::string::npos;
+        newest_visible = newest_visible || row.find("new4") != std::string::npos;
+    }
+    EXPECT_FALSE(old_visible) << bytes;
+    EXPECT_TRUE(newest_visible) << bytes;
+}
+
+TEST(MayaProjectionTest, VeryNarrowTerminalsDoNotCrash)
+{
+    const my_agent::ui::Frame frame{
+        .lines =
+            {
+                my_agent::ui::StyledLine{.text = "> ✅你TAIL17"},
+            },
+    };
+
+    for (const int columns : {1, 2}) {
+        maya::FrameBuffer framebuffer{columns, 3};
+        const std::string& bytes =
+            framebuffer.render(
+                my_agent::ui::to_maya_element(frame, maya::theme::dark),
+                maya::theme::dark
+            );
+
+        my_agent::test::VirtualTerminal terminal{columns, 3};
+        terminal.feed(bytes);
+
+        ASSERT_TRUE(terminal.unhandled().empty())
+            << "Unhandled sequence at " << columns
+            << " columns: " << terminal.unhandled().front();
+        EXPECT_EQ(0, terminal.right_margin_overruns()) << bytes;
+        EXPECT_EQ(3u, terminal.screen().size());
+    }
 }

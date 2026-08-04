@@ -76,19 +76,17 @@ maya::Element to_maya_element(const Frame& frame, const maya::Theme& theme)
     std::vector<maya::Element> rows;
     rows.reserve(frame.lines.size());
 
-    for (const StyledLine& line : frame.lines) {
+    for (auto line = frame.lines.rbegin(); line != frame.lines.rend(); ++line) {
         rows.push_back(
-            maya::dsl::text(
-                line.text,
-                to_maya_style(line, theme),
-                maya::TextWrap::NoWrap
-            )
+            (maya::dsl::text(line->text, to_maya_style(*line, theme))
+             | maya::dsl::shrink(0.0F))
                 .build()
         );
     }
 
     return maya::dsl::vstack()
-        .height(maya::Dimension::fixed(static_cast<int>(frame.lines.size())))
+        .direction(maya::ColumnReverse)
+        .overflow(maya::Overflow::Hidden)
         (std::move(rows));
 }
 

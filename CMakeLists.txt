@@ -519,40 +519,6 @@ gtest_discover_tests(
     TEST_PREFIX "system_prompt."
 )
 
-# TUI 文本度量：显示宽度与折行。纯逻辑，不碰终端，可脱离 tty 单测。
-add_library(
-    my_agent_ui_text
-    src/ui/text_width.cpp
-)
-
-target_include_directories(
-    my_agent_ui_text
-    PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/include"
-)
-
-target_compile_features(
-    my_agent_ui_text
-    PUBLIC cxx_std_26
-)
-
-add_executable(
-    text_width_test
-    tests/text_width_test.cpp
-)
-
-target_link_libraries(
-    text_width_test
-    PRIVATE
-        my_agent_ui_text
-        GTest::gtest_main
-)
-
-gtest_discover_tests(
-    text_width_test
-    TEST_PREFIX "text_width."
-)
-
 # 测试专用量具：最小虚拟终端。pty 不解释转义序列，所以「屏幕上有没有幽灵行」
 # 必须把字节流喂进一个会记账的模型才能回答。不进产品库 —— 它只服务测试。
 add_library(
@@ -628,7 +594,6 @@ target_compile_features(
 target_link_libraries(
     my_agent_ui_view
     PUBLIC
-        my_agent_ui_text
         my_agent_core
 )
 
@@ -683,6 +648,7 @@ target_link_libraries(
     maya_projection_test
     PRIVATE
         my_agent_ui_maya
+        my_agent_virtual_terminal
         GTest::gtest_main
 )
 
@@ -768,12 +734,6 @@ target_include_directories(
 target_compile_features(
     my_agent_ui_input
     PUBLIC cxx_std_26
-)
-
-target_link_libraries(
-    my_agent_ui_input
-    PUBLIC
-        my_agent_ui_text
 )
 
 add_executable(

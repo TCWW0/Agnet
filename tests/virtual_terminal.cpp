@@ -10,7 +10,7 @@ namespace my_agent::test {
 namespace {
 
 // 解码一个 UTF-8 序列，返回码点与消耗字节数。非法序列返回 {U+FFFD, 1}。
-// 这是探针侧的独立实现 —— 与 src/ui/text_width.cpp 里那个同源会让两边一起错。
+// 这是探针侧的独立实现 —— 与生产渲染路径同源会让两边一起错。
 struct Decoded {
     char32_t code_point;
     std::size_t size;

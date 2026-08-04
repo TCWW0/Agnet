@@ -8,7 +8,7 @@
 //   1. 真 pty —— 真实的 raw mode、真实的 write、真实的驱动。字节串断言做不到。
 //   2. VirtualTerminal —— pty **不解释**转义序列，所以「屏幕上有没有幽灵行」
 //      必须把抓到的字节喂进一个会记账的模型。
-//   3. unicode_width_oracle —— 官方 Unicode 16.0.0 数据。用被测的 display_width
+//   3. unicode_width_oracle —— 官方 Unicode 16.0.0 数据。用生产渲染路径的宽度判据
 //      驱动量具，欠算会在两边同时发生、互相抵消，溢出永远量不出来。
 //
 // 探针自身的验证：断言用哨兵串 GH7ZQ（不可能预先存在），基线在敲键**之前**抓。
@@ -21,7 +21,6 @@
 #include <cstddef>
 #include <string>
 #include <thread>
-#include <vector>
 
 #include <poll.h>
 #include <pty.h>
@@ -39,10 +38,8 @@ constexpr int kRows = 8;
 // 那一帧，而不是别的什么东西 —— 上一轮的教训是「断言匹配的文本已经在缓冲区里」
 // 这种循环论证在验证代码里特别隐蔽。
 //
-// 必须放在 payload **尾部**。输入行超宽时 tail_within 从头部裁（保留末尾那一段，
-// 因为用户正在打的是末尾），放在开头的哨兵会被裁掉 —— 实测过：临时把 U+2705 补进
-// 宽度表之后，探针报「输入行从未上屏」而不是报溢出。那种探针依赖欠算才能同步，
-// 修好 bug 反而失去鉴别力。
+// 必须放在 payload **尾部**。它证明探针抓到的是本次输入产生的帧，而不是历史缓冲里
+// 早就存在的文本；尾部哨兵也能穿过旧的横向裁剪实现和新的 Maya 包装实现。
 constexpr std::string_view kSentinel = "GH7ZQ";
 
 // 读 pty 直到 needle 出现或超时。返回是否见到。
@@ -71,9 +68,9 @@ bool read_until(int fd, std::string& sink, std::string_view needle, int seconds)
 // 中间行溢出时下一行的 CUP 会清掉待换行状态，溢出被同帧治好；而末行溢出**没有下一行**，
 // 于是备用屏滚动，此后每一次 CUP 都落在错位的物理行上。
 //
-// 算术（40 列，提示符 "> " 占 2 列，tail_within 得到 38 列）：
-//   欠算之下 display_width("✅"×25) = 25 ≤ 38，整串原样返回；
-//   真实宽度 2 + 25×2 = 52 列，比 40 列多 12 列 —— 末行溢出，滚动。
+// 算术（40 列，提示符 "> " 占 2 列）：
+//   真实宽度 2 + 25×2 + 5 = 57 列，比 40 列多 17 列。旧实现会让末行溢出；
+//   Maya 迁移后应在 cell canvas 内包装/裁剪，不让终端物理滚动。
 //
 // Red 原因：char_width(U'✅') 返回 1（成因 3），且 DECAWM 从未关闭（成因 1，
 // 全仓库 grep `?7l` 零命中）。两者相乘才有滚动 —— 这也是为什么两片修完才能变绿。
@@ -111,7 +108,7 @@ TEST(GhostLineProbeTest, PastingEmojiIntoTheInputLineDoesNotScrollTheAltScreen)
     for (int index = 0; index < 25; ++index) {
         payload += "\xE2\x9C\x85";  // U+2705 ✅，EastAsianWidth-16.0.0 判定 W（2 列）
     }
-    payload += kSentinel;  // 尾部：tail_within 保尾，两种宽度实现下都可见
+    payload += kSentinel;  // 尾部：旧横向裁剪和新 Maya 包装下都可见
     ASSERT_EQ(static_cast<ssize_t>(payload.size()),
               ::write(primary, payload.data(), payload.size()));
 
@@ -136,21 +133,9 @@ TEST(GhostLineProbeTest, PastingEmojiIntoTheInputLineDoesNotScrollTheAltScreen)
     EXPECT_EQ(0, screen.right_margin_overruns())
         << "光标越过了右边距 " << screen.right_margin_overruns() << " 次";
 
-    // 输入行必须**恰好占一个物理行**。这是 view 明写的契约（"它必须恰好一行，
-    // 所以超宽时横向滚动而不是折行 —— 折行会让下面所有行号偏移"）。
-    // 溢出把它变成两个物理行，于是：帧的行号和屏幕的物理行从此错开，
-    // 而 ED(0) 从错位的光标处开始擦，第二个物理行上的残留擦不掉 ——
-    // 屏幕上多出一行谁都没打算画的内容，这就是幽灵行。
-    const std::vector<std::string> rows = screen.screen();
-    int rows_holding_payload = 0;
-    for (const std::string& row : rows) {
-        if (row.find("\xE2\x9C\x85") != std::string::npos) {
-            ++rows_holding_payload;
-        }
-    }
-    EXPECT_EQ(1, rows_holding_payload)
-        << "输入行的内容散落在 " << rows_holding_payload
-        << " 个物理行上，帧行号与屏幕物理行已错开";
+    EXPECT_EQ(0, screen.scrolls_in_alt_screen())
+        << "备用屏滚动了 " << screen.scrolls_in_alt_screen()
+        << " 次 —— Maya 应该在自己的 cell canvas 内处理长输入，而不是让终端物理滚动";
 }
 
 // 场景：屏幕已被历史消息占满，此时输入行落在**最末物理行**上并溢出。

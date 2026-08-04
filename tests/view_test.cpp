@@ -1,4 +1,3 @@
-#include "my_agent/ui/text_width.hpp"
 #include "my_agent/ui/view.hpp"
 
 #include <string>
@@ -72,26 +71,26 @@ TEST(ViewTest, AttributesEachMessageToItsSpeaker)
 }
 
 // 场景：一条比终端宽的消息。
-// 领域语义：Frame 的每一行都是**已经能放进终端**的一行。如果 view 把超宽文本原样
-// 交出去，终端会自己回卷 —— 那意味着实际占用的行数超出 Frame 的行数，后面所有基于
-// 行数的定位（光标落点、滚动、差分）全部失准。所以折行必须发生在 view 里，
-// 用的是显示列而不是字节，宽度上界是 columns 减去说话人前缀占的列。
-// Red 原因：当前实现直接拼接，长消息会得到一条 60 列的行。
-TEST(ViewTest, WrapsMessagesToFitTheGivenWidth)
+// 领域语义：view 只负责 Model -> 自有语义 IR；显示宽度、折行与最终 cell 裁剪已经
+// 移交 Maya。Frame 里应保留完整文本，避免在自己的投影层再维护一套宽度表。
+TEST(ViewTest, LeavesLongMessagesWholeForMayaLayout)
 {
+    const std::string message = "折行必须交给 Maya renderer 和 Yoga 而不是自有 view";
     const my_agent::Model model = model_with({
-        {.role = my_agent::Role::User,
-         .text = "折行必须按显示列算而不是按字节算否则终端会自己回卷"},
+        {.role = my_agent::Role::User, .text = message},
     });
 
     const my_agent::ui::Frame frame = my_agent::ui::view(
         model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 20, .rows = 10}
     );
 
-    ASSERT_LT(1u, frame.lines.size());  // 50 列的文本放不进 20 列，必须折
+    bool found = false;
     for (const my_agent::ui::StyledLine& line : frame.lines) {
-        EXPECT_GE(20, my_agent::ui::display_width(line.text)) << line.text;
+        if (line.text == "> " + message) {
+            found = true;
+        }
     }
+    EXPECT_TRUE(found);
 }
 
 // 场景：模型正在生成，最后一条 assistant 消息还是空的。
@@ -156,12 +155,9 @@ TEST(ViewTest, NamesTheToolAwaitingApproval)
 }
 
 // 场景：历史比屏幕长。
-// 领域语义：屏幕只有 rows 行，Frame 不能比它长 —— 多出来的行终端会顶掉最上面的内容，
-// 而被顶掉的是**哪一端**由溢出顺序决定，不受控制。所以裁剪必须在 view 里做，
-// 并且保留尾部：最近的消息和状态行是用户当下需要的，最早的消息可以滚上去。
-// 反过来保留头部会让屏幕永远停在第一句话上，流式输出完全看不见。
-// Red 原因：当前实现无条件推入所有消息，20 条消息会得到 20 行。
-TEST(ViewTest, KeepsTheMostRecentLinesWhenHistoryExceedsTheScreen)
+// 领域语义：裁剪物理屏幕是 Maya 的职责。view 不能先丢历史，否则后续 Maya 布局层
+// 无法决定应按什么组件边界、输入高度或滚动策略保留尾部。
+TEST(ViewTest, LeavesCompleteHistoryForMayaToClip)
 {
     std::vector<my_agent::Message> messages;
     for (int index = 0; index < 20; ++index) {
@@ -176,8 +172,6 @@ TEST(ViewTest, KeepsTheMostRecentLinesWhenHistoryExceedsTheScreen)
         model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 40, .rows = 5}
     );
 
-    EXPECT_GE(5u, frame.lines.size());
-
     bool has_newest = false;
     bool has_oldest = false;
     for (const my_agent::ui::StyledLine& line : frame.lines) {
@@ -189,7 +183,7 @@ TEST(ViewTest, KeepsTheMostRecentLinesWhenHistoryExceedsTheScreen)
         }
     }
     EXPECT_TRUE(has_newest);
-    EXPECT_FALSE(has_oldest);
+    EXPECT_TRUE(has_oldest);
 }
 
 // 场景：用户正在打字，还没按回车。
@@ -214,34 +208,26 @@ TEST(ViewTest, ShowsTheInputBufferOnTheLastLine)
 }
 
 // 场景：用户打的一行字超过了终端宽度。
-// 领域语义：输入行不能像消息那样折成多行 —— 它必须恰好占一行，因为光标落点是按
-// 帧的行号算的，输入行一变高，下面所有行号全部偏移。终端的通用做法是**横向滚动**：
-// 只显示尾部，因为光标在末尾，用户要看的是自己刚敲的字。
-// Red 原因：当前实现把 ui.input 原样拼上，60 列的输入会得到一条超宽行。
-TEST(ViewTest, ScrollsTheInputLineHorizontallyInsteadOfGrowingTaller)
+// 领域语义：输入缓冲属于 UiState，但显示宽度与裁剪不再属于 view。这里必须把完整
+// 输入交给 Maya；后续输入编辑器切片会在自己的模型里处理光标与多行布局。
+TEST(ViewTest, LeavesLongInputWholeForMayaLayout)
 {
     const my_agent::Model model = model_with();
-    const my_agent::ui::UiState ui{
-        .input = "0123456789012345678901234567890123456789abcdefXYZ",
-    };
+    const std::string input = "0123456789012345678901234567890123456789abcdefXYZ";
+    const my_agent::ui::UiState ui{.input = input};
 
     const my_agent::ui::Frame frame = my_agent::ui::view(
         model, ui, my_agent::ui::Size{.columns = 20, .rows = 10}
     );
 
-    ASSERT_EQ(1u, frame.lines.size());  // 只有输入行，且只有一行
-    EXPECT_GE(20, my_agent::ui::display_width(frame.lines.back().text));
-    // 保留的是尾部：光标在末尾，用户要看见刚敲进去的字。
-    EXPECT_NE(std::string::npos, frame.lines.back().text.find("abcdefXYZ"));
+    ASSERT_FALSE(frame.lines.empty());
+    EXPECT_EQ("> " + input, frame.lines.back().text);
 }
 
 // 场景：终端窄到连提示符都放不下。
-// 领域语义：输入提示符本身固定占 2 列，1 列宽的终端里没有正确答案，只有可接受的
-// 失败方式。锁两条：**必须还有输入行**（少一行会让光标定位算到别人头上），
-// **切出来必须是合法 UTF-8**（切在汉字中间会显示成乱码方块）。
-// 这是 characterization 测试 —— 探查现有行为后固定下来，防止日后"顺手优化"成
-// 丢行或半个字符。
-TEST(ViewTest, KeepsTheInputLineIntactEvenWhenTheTerminalIsTooNarrow)
+// 领域语义：极窄终端的失败方式由 Maya 的 cell renderer 约束；view 仍只保留完整
+// 输入文本，不能为了 1 列终端在这里切掉 UTF-8 内容。
+TEST(ViewTest, LeavesNarrowInputWholeForMayaLayout)
 {
     const my_agent::Model model = model_with();
     const my_agent::ui::UiState ui{.input = "输入"};
@@ -250,9 +236,8 @@ TEST(ViewTest, KeepsTheInputLineIntactEvenWhenTheTerminalIsTooNarrow)
         model, ui, my_agent::ui::Size{.columns = 1, .rows = 10}
     );
 
-    ASSERT_EQ(1u, frame.lines.size());
-    // 放不下的字被丢掉，剩下的只有提示符 —— 而不是半个字符。
-    EXPECT_EQ("> ", frame.lines.back().text);
+    ASSERT_FALSE(frame.lines.empty());
+    EXPECT_EQ("> 输入", frame.lines.back().text);
 }
 
 // 场景：Ollama 连不上，StreamError 落在消息的 error 字段上。
@@ -282,25 +267,29 @@ TEST(ViewTest, ShowsTheFailureSoASilentDeadEndIsNeverMistakenForAHang)
 }
 
 // 场景：错误文本比终端还宽。
-// 领域语义：错误信息常常很长（带 URL、errno、provider 原样返回的一句话）。它和正文
-// 受同一条约束 —— 不折行就会溢出，破坏「帧不超过 rows 行、每行不超过 columns 列」
-// 这个契约，光标于是定位到别人头上。所以错误也必须按宽度折行。
-TEST(ViewTest, WrapsALongFailureMessageLikeAnyOtherLine)
+// 领域语义：错误仍必须上屏，但它不再由 view 按自有宽度表折行；完整错误文本交给
+// Maya，渲染层负责按终端列数重排和裁剪。
+TEST(ViewTest, LeavesLongFailureMessageWholeForMayaLayout)
 {
+    const std::string error =
+        "connection refused while dialing localhost:11434 after 3 attempts";
     const my_agent::Model model = model_with({
         {.role = my_agent::Role::Assistant,
          .text = "",
-         .error = "connection refused while dialing localhost:11434 after 3 attempts"},
+         .error = error},
     });
 
     const my_agent::ui::Frame frame = my_agent::ui::view(
         model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 24, .rows = 10}
     );
 
+    bool found = false;
     for (const my_agent::ui::StyledLine& line : frame.lines) {
-        EXPECT_GE(24, my_agent::ui::display_width(line.text))
-            << "溢出的行会破坏行数契约：" << line.text;
+        if (line.text == "! " + error) {
+            found = true;
+        }
     }
+    EXPECT_TRUE(found);
 }
 
 }  // namespace
