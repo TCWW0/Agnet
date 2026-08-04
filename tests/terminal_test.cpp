@@ -110,6 +110,33 @@ TEST(TerminalTest, LeaveSequenceReversesEnterSequenceInOppositeOrder)
     EXPECT_LT(leave.find(autowrap_on), leave.find(alt_screen_off));
 }
 
+// 场景：DECAWM 的开关时机 —— 跨帧持久，不是每帧开关一次。
+// 领域语义：#14 关 DECAWM 是为了让超宽内容不越过右边距。它必须在进入备用屏时关一次、
+// 退出前还原一次，而**每一帧都不去碰它**。若 frame_bytes 每帧发一次 ?7l/?7h，代价不只
+// 是冗余字节：在 off→on→off 的窗口里，终端短暂恢复自动回卷，一帧里若正好有超宽行就
+// 又能滚屏 —— 幽灵行从这条缝里漏回来。所以「只关一次」是正确性要求，不是优化。
+// 关的动作属于 enter_bytes（每会话一次），frame_bytes（每帧）必须对 ?7 完全沉默。
+TEST(TerminalTest, DisablingAutowrapPersistsAcrossFramesInsteadOfTogglingPerFrame)
+{
+    // enter/leave 各恰好关/开一次 —— 时机集中在会话的两端。
+    const std::string enter{my_agent::ui::enter_bytes()};
+    const std::string leave{my_agent::ui::leave_bytes()};
+    EXPECT_EQ(std::string::npos, enter.find("\x1b[?7l", enter.find("\x1b[?7l") + 1))
+        << "enter_bytes 关了不止一次 DECAWM";
+    EXPECT_EQ(std::string::npos, leave.find("\x1b[?7h", leave.find("\x1b[?7h") + 1))
+        << "leave_bytes 开了不止一次 DECAWM";
+
+    // 每帧路径对 ?7 完全沉默：多行帧里没有任何一处切换自动回卷。
+    const my_agent::ui::Frame frame{
+        .lines = {{.text = "first"}, {.text = "second"}, {.text = "> "}},
+    };
+    const std::string bytes = my_agent::ui::frame_bytes(frame, 80);
+    EXPECT_EQ(std::string::npos, bytes.find("\x1b[?7l"))
+        << "frame_bytes 每帧重新关 DECAWM —— 应只在 enter_bytes 关一次";
+    EXPECT_EQ(std::string::npos, bytes.find("\x1b[?7h"))
+        << "frame_bytes 每帧开 DECAWM —— off→on 的窗口里超宽行又能滚屏，幽灵行会漏回来";
+}
+
 // 场景：在非 tty 上构造驱动（CI、管道、`my_agent | tee`）。
 // 领域语义：非 tty 不是错误，是一种正常的运行方式 —— 但 termios 和转义序列在那里
 // 都没有意义。驱动必须能构造成功且自报 `!is_tty()`，让前端据此回退到行式输出。
