@@ -49,37 +49,36 @@ TEST(ViewTest, RendersUserMessageText)
     EXPECT_TRUE(found);
 }
 
-// 场景：一问一答两条消息。
-// 领域语义：光有文本不够 —— 用户必须能分辨哪句是自己说的、哪句是模型说的。
-// 纯文本终端里没有气泡也没有头像，唯一的手段是行首标记。这条测试锁住「每条消息
-// 带可区分的说话人前缀」，并且两个角色的前缀不同（否则区分为零）。
-// Red 原因：当前实现只推 message.text，两行都没有前缀。
-TEST(ViewTest, AttributesEachMessageToItsSpeaker)
+TEST(ViewTest, MarksEachTurnWithAStableSemanticRail)
 {
     const my_agent::Model model = model_with({
-        {.role = my_agent::Role::User, .text = "ping"},
-        {.role = my_agent::Role::Assistant, .text = "pong"},
+        {.role = my_agent::Role::User, .text = "ping\nagain"},
+        {.role = my_agent::Role::Assistant, .text = "pong\nreply"},
     });
 
     const my_agent::ui::Frame frame = my_agent::ui::view(
         model, my_agent::ui::UiState{}, my_agent::ui::Size{.columns = 40, .rows = 10}
     );
 
-    ASSERT_LE(2u, frame.lines.size());
-    const std::string& user_line = frame.lines[0].text;
-    const std::string& assistant_line = frame.lines[1].text;
-
-    // 前缀 = 消息文本之前的部分。断言两个角色的前缀都非空且互不相同。
-    const std::size_t user_at = user_line.find("ping");
-    const std::size_t assistant_at = assistant_line.find("pong");
-    ASSERT_NE(std::string::npos, user_at);
-    ASSERT_NE(std::string::npos, assistant_at);
-
-    const std::string user_prefix = user_line.substr(0, user_at);
-    const std::string assistant_prefix = assistant_line.substr(0, assistant_at);
-    EXPECT_FALSE(user_prefix.empty());
-    EXPECT_FALSE(assistant_prefix.empty());
-    EXPECT_NE(user_prefix, assistant_prefix);
+    ASSERT_LE(4u, frame.lines.size());
+    EXPECT_EQ("ping", frame.lines[0].text);
+    EXPECT_EQ("again", frame.lines[1].text);
+    EXPECT_EQ("pong", frame.lines[2].text);
+    EXPECT_EQ("reply", frame.lines[3].text);
+    for (std::size_t index = 0; index < 2; ++index) {
+        EXPECT_EQ("│", frame.lines[index].rail);
+        EXPECT_EQ(my_agent::ui::StyleColor::Accent,
+                  frame.lines[index].rail_foreground);
+        EXPECT_EQ(std::string::npos, frame.lines[index].text.find("> "));
+        EXPECT_EQ(std::string::npos, frame.lines[index].text.find("* "));
+    }
+    for (std::size_t index = 2; index < 4; ++index) {
+        EXPECT_EQ("│", frame.lines[index].rail);
+        EXPECT_EQ(my_agent::ui::StyleColor::Primary,
+                  frame.lines[index].rail_foreground);
+        EXPECT_EQ(std::string::npos, frame.lines[index].text.find("> "));
+        EXPECT_EQ(std::string::npos, frame.lines[index].text.find("* "));
+    }
 }
 
 // 场景：一条比终端宽的消息。
@@ -98,8 +97,10 @@ TEST(ViewTest, LeavesLongMessagesWholeForMayaLayout)
 
     bool found = false;
     for (const my_agent::ui::StyledLine& line : frame.lines) {
-        if (line.text == "> " + message) {
+        if (line.text == message) {
             found = true;
+            EXPECT_EQ("│", line.rail);
+            EXPECT_EQ(my_agent::ui::StyleColor::Accent, line.rail_foreground);
         }
     }
     EXPECT_TRUE(found);
@@ -260,6 +261,18 @@ TEST(ViewTest, RendersEachToolCallStateAsAVisiblyDistinctCard)
     EXPECT_NE(done->foreground, failed->foreground);
     EXPECT_NE(done->foreground, rejected->foreground);
     EXPECT_NE(failed->foreground, rejected->foreground);
+    EXPECT_EQ(my_agent::ui::StyleColor::Success, done->foreground);
+    EXPECT_EQ(my_agent::ui::StyleColor::Error, failed->foreground);
+    EXPECT_EQ(my_agent::ui::StyleColor::Muted, rejected->foreground);
+    EXPECT_EQ(my_agent::ui::StyleColor::Primary, done->rail_foreground);
+
+    for (const my_agent::ui::StyledLine& line : frame.lines) {
+        if (line.text.starts_with("+--") || line.text.starts_with("| ")) {
+            EXPECT_EQ("│", line.rail);
+            EXPECT_EQ(my_agent::ui::StyleColor::Primary,
+                      line.rail_foreground);
+        }
+    }
 }
 
 TEST(ViewTest, ShowsActualToolArgumentsInTheCard)
@@ -281,6 +294,16 @@ TEST(ViewTest, ShowsActualToolArgumentsInTheCard)
     EXPECT_NE(std::string::npos, text.find("args:"));
     EXPECT_NE(std::string::npos, text.find("notes.md"));
     EXPECT_NE(std::string::npos, text.find("limit"));
+
+    const auto arguments = std::find_if(
+        frame.lines.begin(), frame.lines.end(),
+        [](const my_agent::ui::StyledLine& line) {
+            return line.text.find("args:") != std::string::npos;
+        }
+    );
+    ASSERT_NE(frame.lines.end(), arguments);
+    EXPECT_EQ(my_agent::ui::StyleColor::Muted, arguments->foreground);
+    EXPECT_EQ("│", arguments->rail);
 }
 
 TEST(ViewTest, ShowsPermissionToolEffectAndArguments)
@@ -425,6 +448,10 @@ TEST(ViewTest, ShowsTheFailureSoASilentDeadEndIsNeverMistakenForAHang)
     for (const my_agent::ui::StyledLine& line : frame.lines) {
         if (line.text.find("connection refused") != std::string::npos) {
             found = true;
+            EXPECT_EQ(my_agent::ui::StyleColor::Error, line.foreground);
+            EXPECT_EQ("│", line.rail);
+            EXPECT_EQ(my_agent::ui::StyleColor::Primary,
+                      line.rail_foreground);
         }
     }
     EXPECT_TRUE(found) << "错误必须上屏，否则与卡死无从区分";
@@ -484,6 +511,7 @@ TEST(ViewTest, RendersTheSupportedMarkdownSubset)
     );
     ASSERT_NE(frame.lines.end(), heading);
     EXPECT_TRUE(heading->bold);
+    EXPECT_EQ(my_agent::ui::StyleColor::Accent, heading->foreground);
 }
 
 TEST(ViewTest, KeepsTheFenceLanguageVisibleInCommittedMarkdown)

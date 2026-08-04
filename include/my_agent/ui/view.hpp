@@ -28,6 +28,8 @@ struct UiState {
 // 一行待渲染文本。样式字段属于自有中间表示；Maya 只在下一层机械转换时出现。
 struct StyledLine {
     std::string text;
+    std::string rail;
+    StyleColor rail_foreground{StyleColor::Default};
     StyleColor foreground{StyleColor::Default};
     StyleColor background{StyleColor::Default};
     bool bold{false};

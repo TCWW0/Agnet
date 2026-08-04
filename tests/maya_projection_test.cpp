@@ -115,6 +115,36 @@ TEST(MayaProjectionTest, CarriesStyledLineAttributesThroughMaya)
     EXPECT_NE(bytes.find(kStyledLine), std::string::npos) << bytes;
 }
 
+TEST(MayaProjectionTest, RendersTurnRailsAsDistinctSemanticFragments)
+{
+    const my_agent::ui::Frame frame{
+        .lines = {
+            my_agent::ui::StyledLine{
+                .text = "user_turn",
+                .rail = "│",
+                .rail_foreground = my_agent::ui::StyleColor::Accent,
+            },
+            my_agent::ui::StyledLine{
+                .text = "assistant_turn",
+                .rail = "│",
+                .rail_foreground = my_agent::ui::StyleColor::Primary,
+            },
+        },
+    };
+
+    maya::FrameBuffer framebuffer{80, 4};
+    const std::string& bytes = framebuffer.render(
+        my_agent::ui::to_maya_element(frame, maya::theme::dark_ansi),
+        maya::theme::dark_ansi
+    );
+
+    EXPECT_NE(bytes.find("│"), std::string::npos) << bytes;
+    EXPECT_NE(bytes.find("user_turn"), std::string::npos) << bytes;
+    EXPECT_NE(bytes.find("assistant_turn"), std::string::npos) << bytes;
+    EXPECT_TRUE(has_sgr_sequence_with_params(bytes, {"95"})) << bytes;
+    EXPECT_NE(bytes.find("\x1b[94m"), std::string::npos) << bytes;
+}
+
 TEST(MayaProjectionTest, FitsStatusBarFragmentsAndKeepsActivityOnANarrowScreen)
 {
     const my_agent::ui::StatusBar status = my_agent::ui::build_status_bar({

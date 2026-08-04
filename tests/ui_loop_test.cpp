@@ -430,7 +430,7 @@ TEST(UiLoopTest, ReflowsOnTerminalResizeWithoutWaitingForAKeypress)
     std::string after;
     ASSERT_EQ(0, ::raise(SIGWINCH));
 
-    const std::string narrow_line(18, 'A');  // 20 列减去 2 列发言人前缀
+    const std::string narrow_line(18, 'A');  // 20 columns minus the input prompt
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
     while (std::chrono::steady_clock::now() < deadline
            && after.find(narrow_line) == std::string::npos) {

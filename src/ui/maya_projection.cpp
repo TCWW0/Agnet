@@ -5,6 +5,7 @@
 #include <maya/style/theme.hpp>
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace my_agent::ui {
@@ -104,6 +105,32 @@ maya::Element to_maya_status_bar(
     return maya::dsl::fit_row(std::move(items)).build();
 }
 
+[[nodiscard]]
+maya::Element to_maya_line(const StyledLine& line, const maya::Theme& theme)
+{
+    const maya::Element body =
+        (maya::dsl::text(line.text, to_maya_style(line, theme))
+         | maya::dsl::shrink(0.0F))
+            .build();
+    if (line.rail.empty()) {
+        return body;
+    }
+
+    const maya::Element rail =
+        (maya::dsl::text(
+             line.rail,
+             to_maya_style(
+                 StyledLine{.foreground = line.rail_foreground},
+                 theme
+             )
+         )
+         | maya::dsl::shrink(0.0F))
+            .build();
+    return (maya::dsl::h(std::move(rail), std::move(body))
+            | maya::dsl::shrink(0.0F))
+        .build();
+}
+
 }  // namespace
 
 maya::Element to_maya_element(const Frame& frame, const maya::Theme& theme)
@@ -119,11 +146,7 @@ maya::Element to_maya_element(const Frame& frame, const maya::Theme& theme)
             continue;
         }
         const StyledLine& line = frame.lines.at(line_index);
-        rows.push_back(
-            (maya::dsl::text(line.text, to_maya_style(line, theme))
-             | maya::dsl::shrink(0.0F))
-                .build()
-        );
+        rows.push_back(to_maya_line(line, theme));
     }
 
     return maya::dsl::vstack()

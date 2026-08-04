@@ -17,13 +17,18 @@ namespace {
 
 constexpr std::string_view kInputPrompt = "> ";
 constexpr std::size_t kMaxToolOutputCharacters = 240;
+constexpr std::string_view kTurnRail = "│";
 
-// 说话人标记。纯文本终端里没有气泡也没有头像，行首这两个字符就是全部的区分手段。
-// 都是 1 列宽的 ASCII，所以缩进对得齐；宽字符会让不同角色的正文起始列错开。
 [[nodiscard]]
-std::string_view speaker_prefix(Role role) noexcept
+StyleColor turn_rail_color(Role role) noexcept
 {
-    return role == Role::User ? "> " : "* ";
+    return role == Role::User ? StyleColor::Accent : StyleColor::Primary;
+}
+
+void apply_turn_rail(StyledLine& line, Role role)
+{
+    line.rail = std::string{kTurnRail};
+    line.rail_foreground = turn_rail_color(role);
 }
 
 [[nodiscard]]
@@ -361,7 +366,7 @@ ToolStatusPresentation tool_status(const ToolCall& call) noexcept
             } else if constexpr (std::is_same_v<T, ToolCall::Failed>) {
                 return {"failed", StyleColor::Error};
             } else {
-                return {"rejected", StyleColor::Secondary};
+                return {"rejected", StyleColor::Muted};
             }
         },
         call.status
@@ -371,30 +376,38 @@ ToolStatusPresentation tool_status(const ToolCall& call) noexcept
 void append_tool_call(Frame& frame, const ToolCall& call)
 {
     const ToolStatusPresentation presentation = tool_status(call);
-    frame.lines.push_back(StyledLine{
+    StyledLine header{
         .text = "+-- tool_call [" + std::string{presentation.label} + "] "
             + call.name,
         .foreground = presentation.color,
         .bold = true,
-    });
-    frame.lines.push_back(StyledLine{
+    };
+    apply_turn_rail(header, Role::Assistant);
+    frame.lines.push_back(std::move(header));
+    StyledLine arguments{
         .text = "| args: " + call.args.dump(),
         .foreground = StyleColor::Muted,
         .dim = true,
-    });
+    };
+    apply_turn_rail(arguments, Role::Assistant);
+    frame.lines.push_back(std::move(arguments));
     if (!call.is_pending()) {
         const std::string output = call.output().empty()
             ? "(empty)"
             : truncate_tool_output(call.output());
-        frame.lines.push_back(StyledLine{
+        StyledLine result{
             .text = "| output: " + output,
             .foreground = presentation.color,
-        });
+        };
+        apply_turn_rail(result, Role::Assistant);
+        frame.lines.push_back(std::move(result));
     }
-    frame.lines.push_back(StyledLine{
+    StyledLine footer{
         .text = "+--",
         .foreground = presentation.color,
-    });
+    };
+    apply_turn_rail(footer, Role::Assistant);
+    frame.lines.push_back(std::move(footer));
 }
 
 // 忙碌提示。Idle 返回空串表示「这一帧不需要状态行」—— 空闲时占一行反而是噪声。
@@ -453,16 +466,14 @@ bool has_status_metadata(const StatusBarInput& status) noexcept
 
 void append_projected_lines(
     Frame& frame,
-    std::string_view prefix,
+    Role role,
     const std::vector<StyledLine>& lines
 )
 {
-    bool first = true;
     for (const StyledLine& line : lines) {
         StyledLine projected = line;
-        projected.text = (first ? std::string{prefix} : "  ") + line.text;
+        apply_turn_rail(projected, role);
         frame.lines.push_back(std::move(projected));
-        first = false;
     }
 }
 
@@ -470,7 +481,6 @@ void append_markdown_message(
     Frame& frame,
     const Message& message,
     std::size_t message_index,
-    std::string_view prefix,
     bool active_stream,
     MarkdownMessageState& state
 )
@@ -519,11 +529,11 @@ void append_markdown_message(
         .committed_prefix = state.committed_prefix,
         .active_tail = std::string{active_tail},
     });
-    append_projected_lines(frame, prefix, state.committed_lines);
+    append_projected_lines(frame, message.role, state.committed_lines);
     if (!active_lines.empty()) {
         append_projected_lines(
             frame,
-            state.committed_lines.empty() ? prefix : "  ",
+            message.role,
             active_lines
         );
     }
@@ -552,7 +562,6 @@ Frame view(
         const std::size_t message_index = static_cast<std::size_t>(
             &message - model.thread.messages.data()
         );
-        const std::string_view prefix = speaker_prefix(message.role);
         const bool active_stream = stream_active
             && message_index + 1 == model.thread.messages.size()
             && message.role == Role::Assistant;
@@ -561,23 +570,26 @@ Frame view(
                 frame,
                 message,
                 message_index,
-                prefix,
                 active_stream,
                 markdown_state.messages.at(message_index)
             );
         } else if (!message.text.empty()) {
-            frame.lines.push_back(StyledLine{
-                .text = std::string{prefix} + message.text,
-            });
+            std::vector<StyledLine> lines = render_plain_segment(message.text);
+            append_projected_lines(frame, message.role, lines);
         }
 
         // 失败必须看得见。StreamError 把 phase 打回 Idle 并写下 error —— 状态行因此
         // 变空、正文可能一个字都没有，于是「回车之后什么都没发生」与卡死无从区分。
         // 跟在正文之后而不是替换它：流到一半才断的回合，已经吐出来的那半段仍然是
-        // 用户要看的上下文。前缀用 ! 而不是 * —— 纯文本终端里行首那两个字符是唯一
-        // 的区分手段，和正常回答同前缀会让人以为模型就是这么答的。
+        // Keep failures attached to the turn rail while retaining the explicit
+        // marker, so a partial response is not mistaken for normal prose.
         if (message.error) {
-            frame.lines.push_back(StyledLine{.text = "! " + *message.error});
+            StyledLine error{
+                .text = "! " + *message.error,
+                .foreground = StyleColor::Error,
+            };
+            apply_turn_rail(error, message.role);
+            frame.lines.push_back(std::move(error));
         }
         for (const ToolCall& call : message.tool_calls) {
             append_tool_call(frame, call);
