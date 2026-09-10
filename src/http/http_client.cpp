@@ -2,6 +2,7 @@
 
 #include <httplib.h>
 
+#include <chrono>
 #include <format>
 #include <string>
 #include <utility>
@@ -47,9 +48,16 @@ HttpResult HttpClient::post_stream(const HttpRequest& request, ChunkCallback on_
         request.port
     )};
 
-    // 流式响应没有可预期的总时长，读超时必须放宽，否则长回答会被截断。
-    client.set_connection_timeout(10, 0);
-    client.set_read_timeout(600, 0);
+    // 请求自带预算时收紧到毫秒级；默认走宽超时（流式响应没有可预期
+    // 的总时长，读超时必须放宽，否则长回答会被截断）。
+    if (request.timeout_ms > 0) {
+        const auto budget = std::chrono::milliseconds{request.timeout_ms};
+        client.set_connection_timeout(budget);
+        client.set_read_timeout(budget);
+    } else {
+        client.set_connection_timeout(10, 0);
+        client.set_read_timeout(600, 0);
+    }
 
     httplib::Headers headers;
     for (const Header& header : request.headers) {
@@ -116,6 +124,21 @@ HttpResult HttpClient::post_stream(const HttpRequest& request, ChunkCallback on_
     }
 
     return {};
+}
+
+std::expected<std::string, HttpError> HttpClient::post(const HttpRequest& request) const
+{
+    // 整包 = 流的累积。错误路径（超时/连接失败/Non2xx/中止）原样透传，
+    // Non2xx 的响应体已由 post_stream 收进 error.message。
+    std::string body;
+    const HttpResult result = post_stream(request, [&body](std::string_view chunk) {
+        body.append(chunk);
+        return true;
+    });
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    return body;
 }
 
 }  // namespace my_agent::http

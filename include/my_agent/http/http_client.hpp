@@ -34,6 +34,10 @@ struct HttpRequest {
     std::vector<Header> headers;
     std::string body;
     bool use_tls{false};
+    // 0 = http 层默认（连接 10s / 读 600s）；>0 = 把连接超时与读超时同时
+    // 收紧到该值。socket 级语义：是单次连接/单次读的等待上限，不是整个
+    // 请求的墙钟预算（对端慢滴漏不会触发）。
+    int timeout_ms{0};
 };
 
 // 返回 false 中止流；HttpClient 会以 HttpErrorKind::Aborted 结束
@@ -45,6 +49,12 @@ class HttpClient {
 public:
     [[nodiscard]]
     HttpResult post_stream(const HttpRequest& request, ChunkCallback on_chunk) const;
+
+    // 非流式便捷口：整包收齐后一次返回。错误语义与 post_stream 完全一致
+    // （Non2xx 时 message 就是错误响应体）。内部复用 post_stream，
+    // 整包累积的负担留在 http 层，不摊给每个调用方。
+    [[nodiscard]]
+    std::expected<std::string, HttpError> post(const HttpRequest& request) const;
 };
 
 }  // namespace my_agent::http

@@ -2,7 +2,13 @@
 
 #include <gtest/gtest.h>
 
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <chrono>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -150,3 +156,106 @@ TEST(HttpSmokeTest, ReportsNon2xxWithStatusAndBody)
 }
 
 }  // namespace
+
+TEST(HttpSmokeTest, PostReturnsWholeBodyFromLocalOllama)
+{
+    if (!ollama_reachable()) {
+        GTEST_SKIP() << "Ollama is not reachable on localhost:11434";
+    }
+
+    // post() 的本职：非流式整包。embed 端点天然无流，是最贴切的验尸对象。
+    const my_agent::http::HttpClient client;
+    const my_agent::http::HttpRequest request{
+        .host = kOllamaHost,
+        .port = kOllamaPort,
+        .path = "/api/embed",
+        .headers = {{"Content-Type", "application/json"}},
+        .body = R"({"model":"nomic-embed-text:latest","input":["hello"]})",
+        .use_tls = false,
+    };
+
+    const auto result = client.post(request);
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    // 严格的 JSON 断言归 rag 的 parse_embed_response（57 测试钉着），
+    // 这里只需证明整包收齐：含 embeddings 数组的完整响应体。
+    EXPECT_NE(std::string::npos, result->find("\"embeddings\""));
+}
+
+TEST(HttpSmokeTest, PostMapsNon2xxWithStatus)
+{
+    if (!ollama_reachable()) {
+        GTEST_SKIP() << "Ollama is not reachable on localhost:11434";
+    }
+
+    // /api/tags 只接受 GET：POST 必然非 2xx。验证 post() 的错误映射
+    // 与 post_stream 一致 —— kind、status 透传，错误体不进成功通道。
+    const my_agent::http::HttpClient client;
+    const my_agent::http::HttpRequest request{
+        .host = kOllamaHost,
+        .port = kOllamaPort,
+        .path = "/api/tags",
+        .headers = {},
+        .body = {},
+        .use_tls = false,
+    };
+
+    const auto result = client.post(request);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(my_agent::http::HttpErrorKind::Non2xx, result.error().kind);
+    EXPECT_GE(result.error().status, 400);
+}
+
+TEST(HttpSmokeTest, PostHonorsReadTimeout)
+{
+    // 哑 socket：accept 之后只收不回 —— 读超时的最小保真对端。测的是
+    // 客户端，对端越 dumb 越好：不引入第二个 HTTP 实现，耦合面为零。
+    const int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(listen_fd, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;  // 端口交给内核，避免撞车
+    ASSERT_EQ(0, ::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)));
+    ASSERT_EQ(0, ::listen(listen_fd, 1));
+    socklen_t addr_len = sizeof(addr);
+    ASSERT_EQ(0, ::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &addr_len));
+    const int port = ntohs(addr.sin_port);
+
+    // 服务线程：阻塞读直到对端关连接（客户端超时后 Client 析构即关），
+    // 于是线程自然退出，测试收尾不需要额外的唤醒机制。
+    std::thread silent([listen_fd] {
+        const int conn = ::accept(listen_fd, nullptr, nullptr);
+        if (conn < 0) {
+            return;
+        }
+        char sink[64];
+        while (::read(conn, sink, sizeof(sink)) > 0) {
+        }
+        ::close(conn);
+    });
+
+    const my_agent::http::HttpClient client;
+    const my_agent::http::HttpRequest request{
+        .host = "127.0.0.1",
+        .port = port,
+        .path = "/api/embed",
+        .headers = {{"Content-Type", "application/json"}},
+        .body = R"({"model":"x","input":["y"]})",
+        .use_tls = false,
+        .timeout_ms = 300,
+    };
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto result = client.post(request);
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+
+    ::close(listen_fd);
+    silent.join();
+
+    ASSERT_FALSE(result.has_value()) << result.error().message;
+    EXPECT_EQ(my_agent::http::HttpErrorKind::Timeout, result.error().kind);
+    // 预算 300ms 真的生效：若还挂在默认读超时上，这里等的是 600s。
+    EXPECT_LT(elapsed_ms, 1500);
+}
+
