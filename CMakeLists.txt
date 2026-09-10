@@ -1017,6 +1017,21 @@ gtest_discover_tests(
     TEST_PREFIX "rag."
 )
 
+# 检索质量基准：已知答案合成（tf×idf top-4 拼查询，gold = 该块自身），
+# 覆盖匹配，recall@k / MRR / µs。量具不是断言 —— 不进 ctest，跑一次出报告。
+# 也不是测试专用量具那种 tests/ 目标：它是 RAG 模块的常驻仪表，
+# #41 的阶梯（BM25-only vs +dense vs +RRF）在这上面长出来。
+add_executable(
+    rag_bench
+    src/rag/bench.cpp
+)
+
+target_link_libraries(
+    rag_bench
+    PRIVATE
+        my_agent_rag
+)
+
 # 阶段一演示终点：最小 REPL。只碰 dispatch / run_until_quiescent / model
 add_executable(
     my_agent_repl
