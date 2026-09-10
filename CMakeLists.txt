@@ -981,6 +981,42 @@ gtest_discover_tests(
     TEST_PREFIX "terminal."
 )
 
+# ── rag: 文档 RAG 主干（学习线切片 #40~#43）───────────────────────────────
+# 叶子模块：不依赖 tool/runtime/ui。教材 = agentty/src/rag/。
+# 切片 #40：chunker + tokenize + BM25（词匹配路）。
+add_library(
+    my_agent_rag
+    src/rag/bm25.cpp
+)
+
+target_include_directories(
+    my_agent_rag
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+target_compile_features(
+    my_agent_rag
+    PUBLIC cxx_std_26
+)
+
+add_executable(
+    rag_test
+    tests/rag_test.cpp
+)
+
+target_link_libraries(
+    rag_test
+    PRIVATE
+        my_agent_rag
+        GTest::gtest_main
+)
+
+gtest_discover_tests(
+    rag_test
+    TEST_PREFIX "rag."
+)
+
 # 阶段一演示终点：最小 REPL。只碰 dispatch / run_until_quiescent / model
 add_executable(
     my_agent_repl
