@@ -26,8 +26,7 @@ ExecResult execute_remember(
         });
     }
 
-    // 缺省 project：写错了只影响当前工作区，而默认全局会污染每一个其他工作区
-    // 的系统提示。
+    // 缺省 project：写错了只影响当前工作区，而默认全局会污染每一个其他工作区的系统提示。
     memory::Scope scope = memory::Scope::Project;
     if (args.contains("scope")) {
         if (!args["scope"].is_string()) {

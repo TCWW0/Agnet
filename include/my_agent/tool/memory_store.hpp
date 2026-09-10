@@ -18,8 +18,7 @@ namespace my_agent::tool::memory {
 //
 // 选 JSONL 而不是单个 JSON 文档，有三个理由：
 //   1. 追加一条就是一次 append 写 `<record>\n`，不需要读-改-写整个文件。
-//   2. 文件按行可寻址：forget 剔掉命中的行、重写存活的行。坏行只影响那一条，
-//      加载时跳过续读。
+//   2. 文件按行可寻址：forget 剔掉命中的行、重写存活的行。坏行只影响那一条，加载时跳过续读。
 //   3. grep 友好 —— 人要审计 agent 存了什么关于自己的事实时，直接看得懂。
 enum class Scope : std::uint8_t {
     User,     // 跨工作区共享

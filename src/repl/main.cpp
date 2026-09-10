@@ -205,8 +205,7 @@ int main()
     };
 
     // 每轮重新构建：memory 与 skill 目录会在会话过程中变化。remember 工具刚写下
-    // 的事实，下一轮就必须出现在提示里 —— 这正是 provider 是函数而不是字符串的
-    // 理由。
+    // 的事实，下一轮就必须出现在提示里 —— 这正是 provider 是函数而不是字符串的理由。
     host_runtime.set_system_prompt_provider([] {
         my_agent::prompt::Context context = my_agent::prompt::capture_environment();
         context.memories = load_memories();
