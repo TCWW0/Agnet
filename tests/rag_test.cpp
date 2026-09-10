@@ -239,6 +239,43 @@ TEST(Chunker, OverlapRepeatsBoundaryLines) {
     }
 }
 
+// 最多 3 空格缩进的 ``` 仍是合法围栏（CommonMark）。不认缩进围栏时，
+// fence 状态从未进入，围栏内的空行会被当成语义断点，代码块被劈开。
+TEST(Chunker, IndentedFenceKeepsBlockIntact) {
+    const std::string body =
+        "intro line\n"
+        "  ```bash\n"
+        "a=1\n"
+        "\n"
+        "b=2\n"
+        "```\n"
+        "after fence\n";
+    const auto chunks = rag::chunk_document("f.md", body, 40, 1000, 0);
+    const rag::Chunk* code = nullptr;
+    for (const auto& c : chunks)
+        if (c.text.find("a=1") != std::string::npos) code = &c;
+    ASSERT_NE(code, nullptr);
+    EXPECT_NE(code->text.find("b=2"), std::string::npos);
+}
+
+// ~~~ 是等价的围栏标记（CommonMark）。同样要进 fence 状态。
+TEST(Chunker, TildeFenceKeepsBlockIntact) {
+    const std::string body =
+        "intro line\n"
+        "~~~python\n"
+        "x = 1\n"
+        "\n"
+        "y = 2\n"
+        "~~~\n"
+        "after fence\n";
+    const auto chunks = rag::chunk_document("t.md", body, 40, 1000, 0);
+    const rag::Chunk* code = nullptr;
+    for (const auto& c : chunks)
+        if (c.text.find("x = 1") != std::string::npos) code = &c;
+    ASSERT_NE(code, nullptr);
+    EXPECT_NE(code->text.find("y = 2"), std::string::npos);
+}
+
 // ── C. BM25：建索引 + 打分检索契约 ────────────────────────────────────────
 
 TEST(Bm25, RareTermRanksItsChunkFirst) {

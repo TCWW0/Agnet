@@ -11,9 +11,10 @@
 #include <vector>
 
 namespace my_agent::rag {
+namespace {
 constexpr double kK1 = 1.5;         // tf 饱和旋钮
 constexpr double kB  = 0.75;
-constexpr int    kHeadingBoost = 3; // 面包屑入袋份数 
+constexpr int    kHeadingBoost = 3; // 面包屑入袋份数
 
 // ── UTF-8：首字节 → 码点字节长度 ───────────────────────────────────────
 std::size_t utf8_seq_len(unsigned char b) {
@@ -23,6 +24,8 @@ std::size_t utf8_seq_len(unsigned char b) {
     else if ((b & 0xF8) == 0xF0) return 4;
     return 1;   // 非法首字节：按 1 字节容错前进
 }
+} // namespace（B2：内部链接 —— rag.hpp 不声明这些，具名 ns 下的外部符号
+  //     会在 #41 的 dense.cpp 出现同名时撞 ODR）
 
 /*
  * 一个简单的分词器，规则如下
@@ -40,7 +43,7 @@ void tokenize(std::string_view s, std::vector<std::string>& out) {
     };
     auto flush_run = [&]{
         if (run.size()==1){
-            out.push_back(std::move(std::move(run[0])));    // 单独的字原样发出
+            out.push_back(std::move(run[0]));    // 单独的字原样发出
         } else {
             for (std::size_t k=0;k+1<run.size();++k){
                 out.push_back(run[k]+run[k+1]);     // 重叠 bigram
@@ -75,6 +78,16 @@ void tokenize(std::string_view s, std::vector<std::string>& out) {
 
 // chunker辅助
 namespace{
+// 围栏标记：行首允许空白缩进的 ``` 或 ~~~（对照 agentty is_fenced_code_start）。
+// 两种标记都要认、缩进也要认 —— 否则缩进围栏整段不进 fence 状态，
+// 软界会在代码中间断开，恰是围栏守卫要防的事。
+bool is_fence_marker(std::string_view line) {
+    std::size_t i = 0;
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+    const std::string_view t = line.substr(i);
+    return t.starts_with("```") || t.starts_with("~~~");
+}
+
 // 简单判断传入的内容是否为一个空白内容(只包含空格/换行符/制表符)
 bool is_blank(std::string_view line){
     // 主动把常见的 \r 和 \n 尾巴去掉再判断
@@ -110,7 +123,7 @@ struct ChunkContext{
 };
 
 void update_context(std::string_view line,ChunkContext& ctx) {
-    if (line.substr(0,3)=="```"){
+    if (is_fence_marker(line)){
         ctx.in_code_fence = !ctx.in_code_fence;
         return;
     }
