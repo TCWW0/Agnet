@@ -984,9 +984,21 @@ gtest_discover_tests(
 # ── rag: 文档 RAG 主干（学习线切片 #40~#43）───────────────────────────────
 # 叶子模块：不依赖 tool/runtime/ui。教材 = agentty/src/rag/。
 # 切片 #40：chunker + tokenize + BM25（词匹配路）。
+# 切片 #41：语义路（embed.cpp）+ 混合检索（hybrid.cpp）。
 add_library(
     my_agent_rag
     src/rag/bm25.cpp
+    src/rag/embed.cpp
+    src/rag/hybrid.cpp
+)
+
+# 接口纯净原则（#41 拍板）：http/json 是 rag 的实现依赖，PRIVATE ——
+# 不向 rag_test/rag_bench 等下游传递（rag.hpp 里一个相关 include 都没有）。
+target_link_libraries(
+    my_agent_rag
+    PRIVATE
+        my_agent_http
+        nlohmann_json::nlohmann_json
 )
 
 target_include_directories(
@@ -1010,6 +1022,8 @@ target_link_libraries(
     PRIVATE
         my_agent_rag
         GTest::gtest_main
+        # #41 Red 测试要断言 JSON（拼包/解析纯函数）， PRIVATE 即可
+        nlohmann_json::nlohmann_json
 )
 
 gtest_discover_tests(
@@ -1030,6 +1044,8 @@ target_link_libraries(
     rag_bench
     PRIVATE
         my_agent_rag
+        my_agent_http
+        nlohmann_json::nlohmann_json
 )
 
 # 阶段一演示终点：最小 REPL。只碰 dispatch / run_until_quiescent / model

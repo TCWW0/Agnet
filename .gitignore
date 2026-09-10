@@ -6,3 +6,5 @@ docs/
 .codex/
 .claude/
 .agents/
+# rag_bench 改写探针的本地缓存（按 gold 块身份生成，LLM 产物）
+rag_bench_rewrites.json
